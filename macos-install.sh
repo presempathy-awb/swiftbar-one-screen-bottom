@@ -1,26 +1,36 @@
 #!/usr/bin/env bash
-# Download into ~/.config/swiftbar as apply.sh, then: ./apply.sh --apply
+# Install the one-screen bottom strip into SwiftBar's plugin folder.
+# Darwin: writes plugins and starts the overlay.
+# Linux: refuses. This workspace cannot see /Users/andrew/.config/swiftbar.
 set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+MARKER="swiftbar-one-screen-bottom"
+DEFAULT_MAC_PLUGINS="/Users/andrew/.config/swiftbar"
+BASE="https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main"
+MAC_CURL="${BASE}/macos-install.sh"
+
+mac_commands() {
+  cat <<EOF
+1. cd ${DEFAULT_MAC_PLUGINS}
+2. curl -fsSL ${MAC_CURL} -o apply.sh
+3. chmod +x apply.sh
+4. ./apply.sh --apply
+EOF
+}
+
+usage() {
+  mac_commands
+}
 
 if [[ -n "${SWIFTBAR:-}" ]]; then
   exit 0
 fi
 
-MARKER="swiftbar-one-screen-bottom"
-DEFAULT_MAC_PLUGINS="/Users/andrew/.config/swiftbar"
-BASE="https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main"
-
-if [[ "$(uname -s)" != "Darwin" ]]; then
-  cat >&2 <<EOF
-This installer only runs on the Mac.
-
-  cd ${DEFAULT_MAC_PLUGINS}
-  curl -fsSL ${BASE}/macos-install.sh -o apply.sh
-  chmod +x apply.sh
-  ./apply.sh --apply
-EOF
+linux_refuse() {
+  mac_commands >&2
   exit 1
-fi
+}
 
 DEST_ARG=""
 while [[ $# -gt 0 ]]; do
@@ -29,11 +39,16 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --help|-h)
-      echo "Install a bottom SwiftBar strip on one display."
+      usage
       exit 0
+      ;;
+    --)
+      shift
+      break
       ;;
     -*)
       echo "unknown option: $1" >&2
+      usage >&2
       exit 2
       ;;
     *)
@@ -43,25 +58,65 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -n "$DEST_ARG" ]]; then
-  DEST="$DEST_ARG"
-elif DEST="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null)"; then
-  DEST="${DEST%\"}"
-  DEST="${DEST#\"}"
-else
-  DEST="${SWIFTBAR_PLUGINS_PATH:-$HOME/.config/swiftbar}"
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  linux_refuse
 fi
 
-mkdir -p "$DEST/bin"
-curl -fsSL "$BASE/one-screen-bottom.5s.sh" -o "$DEST/one-screen-bottom.5s.sh"
-curl -fsSL "$BASE/bin/bottom-overlay.swift" -o "$DEST/bin/bottom-overlay.swift"
-chmod 755 "$DEST/one-screen-bottom.5s.sh"
-chmod 644 "$DEST/bin/bottom-overlay.swift"
+resolve_dest() {
+  local dest=""
+  if [[ -n "$DEST_ARG" ]]; then
+    printf '%s\n' "$DEST_ARG"
+    return
+  fi
+  if dest="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null)"; then
+    dest="${dest%\"}"
+    dest="${dest#\"}"
+  fi
+  if [[ -z "$dest" ]]; then
+    dest="${SWIFTBAR_PLUGINS_PATH:-}"
+  fi
+  if [[ -z "$dest" ]]; then
+    if [[ -d "$HOME/.config/swiftbar" ]]; then
+      dest="$HOME/.config/swiftbar"
+    elif [[ -d "$DEFAULT_MAC_PLUGINS" ]]; then
+      dest="$DEFAULT_MAC_PLUGINS"
+    else
+      dest="$HOME/.config/swiftbar"
+    fi
+  fi
+  printf '%s\n' "$dest"
+}
+
+install_file() {
+  local rel="$1" dest="$2" mode="$3"
+  local src="$ROOT/$rel"
+  mkdir -p "$(dirname "$dest")"
+  if [[ -f "$src" ]]; then
+    install -m "$mode" "$src" "$dest"
+    return
+  fi
+  curl -fsSL "$BASE/$rel" -o "$dest"
+  chmod "$mode" "$dest"
+}
+
+DEST="$(resolve_dest)"
+mkdir -p "$DEST/bin" "$DEST/lib"
+
+install_file "one-screen-bottom.5s.sh" "$DEST/one-screen-bottom.5s.sh" 755
+install_file "one-screen-bottom-launch.5s.sh" "$DEST/one-screen-bottom-launch.5s.sh" 755
+install_file "lib/bar-state.sh" "$DEST/lib/bar-state.sh" 644
+install_file "bin/bottom-overlay.swift" "$DEST/bin/bottom-overlay.swift" 644
+
+# shellcheck source=lib/bar-state.sh
+. "$DEST/lib/bar-state.sh"
+bar_mark_open "$DEST"
 
 BIN="$DEST/bin/bottom-overlay"
 SRC="$DEST/bin/bottom-overlay.swift"
 if ! /usr/bin/swiftc -O -o "$BIN" "$SRC" 2>/tmp/swiftbar-bottom-overlay.log; then
-  echo "swiftc failed; see /tmp/swiftbar-bottom-overlay.log" >&2
+  echo "Installed keeper into $DEST, but swiftc failed. See /tmp/swiftbar-bottom-overlay.log" >&2
+  echo "SwiftBar will retry compile on refresh." >&2
+  open "swiftbar://refreshallplugins" >/dev/null 2>&1 || true
   exit 1
 fi
 chmod +x "$BIN"
@@ -75,6 +130,8 @@ nohup "$BIN" --plugins-dir "$DEST" --marker "$MARKER" \
   >/tmp/swiftbar-bottom-overlay.out 2>&1 &
 disown || true
 
+open "swiftbar://refreshallplugins" >/dev/null 2>&1 || true
+
 if [[ -f "$0" && "$0" != *bash && -r "$0" ]]; then
   src_dir="$(cd "$(dirname "$0")" && pwd)"
   dest_dir="$(cd "$DEST" && pwd)"
@@ -83,6 +140,6 @@ if [[ -f "$0" && "$0" != *bash && -r "$0" ]]; then
   fi
 fi
 
-open "swiftbar://refreshallplugins" >/dev/null 2>&1 || true
 echo "Installed into $DEST"
-echo "One display: bottom strip. Two displays: strip hides."
+echo "One display: bottom strip with × to close. Two displays: strip hides."
+echo "Closed: ⬇ in SwiftBar reopens. It will not auto-open while closed."

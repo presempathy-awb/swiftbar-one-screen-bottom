@@ -9,6 +9,10 @@ On the Mac:
 4. ./apply.sh --apply
 ```
 
+One display: strip sits on the bottom edge. × closes it and keeps it closed (including under memory pressure). ⬇ in SwiftBar shows only while it is down; click to reopen.
+
+Two displays: strip hides. Your lower-display menu bar stays.
+
 Gitea `awb/swiftbar-one-screen-bottom` both ways with GitHub. SSH Host `hidin` only. No tokens.
 
 ```

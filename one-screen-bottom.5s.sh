@@ -7,6 +7,7 @@
 #
 # Hidden. Starts a bottom strip only when this Mac has one display.
 # Two monitors: overlay hides; your existing lower-display SwiftBar stays.
+# Closed (×) or urgent memory pressure: do not start.
 
 set -euo pipefail
 
@@ -17,6 +18,17 @@ PLUGINS="${SWIFTBAR_PLUGINS_PATH:-$DIR}"
 MARKER="swiftbar-one-screen-bottom"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
+  exit 0
+fi
+
+# shellcheck source=lib/bar-state.sh
+if [[ -f "$DIR/lib/bar-state.sh" ]]; then
+  . "$DIR/lib/bar-state.sh"
+else
+  exit 0
+fi
+
+if ! bar_should_autostart "$DIR"; then
   exit 0
 fi
 
@@ -36,7 +48,7 @@ if [[ ! -x "$BIN" || "$SRC" -nt "$BIN" ]]; then
   chmod +x "$BIN"
 fi
 
-if ! pgrep -fq "$MARKER"; then
+if ! bar_is_up; then
   nohup "$BIN" --plugins-dir "$PLUGINS" --marker "$MARKER" \
     >/tmp/swiftbar-bottom-overlay.out 2>&1 &
   disown || true
