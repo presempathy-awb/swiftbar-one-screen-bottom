@@ -14,5 +14,6 @@ Gitea `awb/swiftbar-one-screen-bottom` only (both ways with GitHub):
 ```
 1. export GITEA_TOKEN=... GH_MIRROR_TOKEN=...
 2. curl -fsSL https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main/scripts/gitea-bidir.sh | bash
-3. gh secret set GITEA_TOKEN -R presempathy-awb/swiftbar-one-screen-bottom
 ```
+
+Re-run 2 after GitHub commits. Gitea commits push-mirror to GitHub on their own.
