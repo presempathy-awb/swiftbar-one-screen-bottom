@@ -71,7 +71,9 @@ git clone --mirror "$GITHUB" "$tmp/repo.git"
 git -C "$tmp/repo.git" push --mirror "https://oauth2:${GITEA_TOKEN}@${GITEA_HOST#https://}/${GITEA_OWNER}/${REPO}.git"
 echo "pushed GitHub -> Gitea"
 
-workflow="$(cat <<'YML'
+# GitHub Actions secret expression assembled at runtime.
+gha_secret='$'"{{ secrets.GITEA_TOKEN }}"
+workflow="$(cat <<YML
 name: sync-gitea
 on:
   push:
@@ -90,15 +92,15 @@ jobs:
           fetch-depth: 0
       - name: Push main to Gitea
         env:
-          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+          GITEA_TOKEN: ${gha_secret}
         run: |
           set -euo pipefail
-          if [[ -z "${GITEA_TOKEN:-}" ]]; then
+          if [[ -z "\${GITEA_TOKEN:-}" ]]; then
             echo "Set GitHub secret GITEA_TOKEN for this repo only." >&2
             exit 1
           fi
-          git push --porcelain \
-            "https://oauth2:${GITEA_TOKEN}@git.telpher.stream/awb/swiftbar-one-screen-bottom.git" \
+          git push --porcelain \\
+            "https://oauth2:\${GITEA_TOKEN}@git.telpher.stream/awb/swiftbar-one-screen-bottom.git" \\
             HEAD:refs/heads/main
 YML
 )"
