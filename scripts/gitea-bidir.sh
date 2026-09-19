@@ -70,4 +70,54 @@ trap 'rm -rf "$tmp"' EXIT
 git clone --mirror "$GITHUB" "$tmp/repo.git"
 git -C "$tmp/repo.git" push --mirror "https://oauth2:${GITEA_TOKEN}@${GITEA_HOST#https://}/${GITEA_OWNER}/${REPO}.git"
 echo "pushed GitHub -> Gitea"
+
+workflow="$(cat <<'YML'
+name: sync-gitea
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  gitea:
+    if: github.repository == 'presempathy-awb/swiftbar-one-screen-bottom'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: sync-gitea
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push main to Gitea
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GITEA_TOKEN:-}" ]]; then
+            echo "Set GitHub secret GITEA_TOKEN for this repo only." >&2
+            exit 1
+          fi
+          git push --porcelain \
+            "https://oauth2:${GITEA_TOKEN}@git.telpher.stream/awb/swiftbar-one-screen-bottom.git" \
+            HEAD:refs/heads/main
+YML
+)"
+content="$(printf '%s' "$workflow" | python3 -c 'import base64,sys; print(base64.b64encode(sys.stdin.buffer.read()).decode())')"
+wf_api="https://api.github.com/repos/presempathy-awb/${REPO}/contents/.github/workflows/sync-gitea.yml"
+sha="$(curl -fsS -H "Authorization: Bearer ${GH_MIRROR_TOKEN}" -H "Accept: application/vnd.github+json" "$wf_api" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("sha",""))' || true)"
+body="$(python3 - "$content" "$sha" <<'PY'
+import json, sys
+content, sha = sys.argv[1], sys.argv[2]
+payload = {"message": "Add Gitea sync workflow for this repo only", "content": content}
+if sha:
+    payload["sha"] = sha
+print(json.dumps(payload))
+PY
+)"
+curl -fsS -X PUT \
+  -H "Authorization: Bearer ${GH_MIRROR_TOKEN}" \
+  -H "Accept: application/vnd.github+json" \
+  -H "Content-Type: application/json" \
+  -d "$body" \
+  "$wf_api" >/dev/null
 echo "GitHub -> Gitea ongoing: repo secret GITEA_TOKEN on presempathy-awb/${REPO}"
