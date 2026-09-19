@@ -1,125 +1,158 @@
 #!/usr/bin/env bash
-# One-time GitHub <-> Gitea setup for swiftbar-one-screen-bottom only.
-# Needs GITEA_TOKEN (Gitea write) and GH_MIRROR_TOKEN (GitHub write).
+# GitHub <-> Gitea for swiftbar-one-screen-bottom only.
+# Gitea is SSH Host hidin. No tokens, no credential URLs.
 set -euo pipefail
 
-GITEA_HOST="${GITEA_HOST:-https://git.telpher.stream}"
-GITEA_OWNER="${GITEA_OWNER:-awb}"
 REPO="swiftbar-one-screen-bottom"
-GITHUB="https://github.com/presempathy-awb/${REPO}.git"
-GITEA="${GITEA_HOST}/${GITEA_OWNER}/${REPO}.git"
+BRANCH="main"
+HIDIN_URL="git@hidin:awb/${REPO}.git"
+GITHUB_URL="https://github.com/presempathy-awb/${REPO}.git"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-if [[ -z "${GITEA_TOKEN:-}" || -z "${GH_MIRROR_TOKEN:-}" ]]; then
-  echo "export GITEA_TOKEN=... GH_MIRROR_TOKEN=..." >&2
+commands() {
+  cat <<EOF
+1. git clone ${GITHUB_URL}
+2. cd ${REPO}
+3. git remote add hidin ${HIDIN_URL}
+4. bash scripts/gitea-bidir.sh
+EOF
+}
+
+die_commands() {
+  local status="${1:-2}"
+  commands >&2
+  exit "$status"
+}
+
+forbid_tokens() {
+  local name
+  for name in \
+    GITEA_TOKEN \
+    GH_MIRROR_TOKEN \
+    GH_TOKEN \
+    GITHUB_TOKEN \
+    GITEA_ACCESS_TOKEN \
+    GITEA_PASSWORD \
+    GH_PASSWORD \
+    GITHUB_PASSWORD \
+    GH_MIRROR_PASS
+  do
+    if [[ -n "${!name:-}" ]]; then
+      echo "unset ${name} — hidin SSH only, no tokens" >&2
+      die_commands 2
+    fi
+  done
+}
+
+url_has_embedded_credentials() {
+  local url="$1"
+  case "$url" in
+    *oauth2:*|*x-access-token:*)
+      return 0
+      ;;
+  esac
+  [[ "$url" =~ ^https?://[^/@]+:[^/@]+@ ]]
+}
+
+forbid_tokens
+
+case "${1:-}" in
+  --help|-h)
+    commands
+    exit 0
+    ;;
+  --dry-run)
+    printf 'github %s\n' "$GITHUB_URL"
+    printf 'hidin %s\n' "$HIDIN_URL"
+    exit 0
+    ;;
+  "")
+    ;;
+  *)
+    echo "unknown option: $1" >&2
+    die_commands 2
+    ;;
+esac
+
+if url_has_embedded_credentials "$GITHUB_URL" || url_has_embedded_credentials "$HIDIN_URL"; then
+  echo "refusing credential URL" >&2
   exit 2
 fi
 
-api() {
-  local method="$1" path="$2" data="${3:-}"
-  if [[ -n "$data" ]]; then
-    curl -fsS -X "$method" \
-      -H "Authorization: token ${GITEA_TOKEN}" \
-      -H "Content-Type: application/json" \
-      -d "$data" \
-      "${GITEA_HOST}/api/v1${path}"
+if [[ -d "$ROOT/.git" ]]; then
+  if git -C "$ROOT" remote get-url hidin >/dev/null 2>&1; then
+    existing="$(git -C "$ROOT" remote get-url hidin)"
+    if [[ "$existing" != "$HIDIN_URL" ]]; then
+      echo "hidin remote must be ${HIDIN_URL}" >&2
+      exit 2
+    fi
   else
-    curl -fsS -X "$method" \
-      -H "Authorization: token ${GITEA_TOKEN}" \
-      "${GITEA_HOST}/api/v1${path}"
+    git -C "$ROOT" remote add hidin "$HIDIN_URL"
   fi
-}
-
-if ! curl -fsS -H "Authorization: token ${GITEA_TOKEN}" \
-  "${GITEA_HOST}/api/v1/repos/${GITEA_OWNER}/${REPO}" >/dev/null 2>&1; then
-  api POST "/repos/migrate" "$(cat <<EOF
-{
-  "clone_addr": "${GITHUB}",
-  "repo_name": "${REPO}",
-  "repo_owner": "${GITEA_OWNER}",
-  "mirror": false,
-  "private": false,
-  "service": "git",
-  "description": "SwiftBar one-screen bottom strip. Bidirectional with GitHub presempathy-awb/${REPO}."
-}
-EOF
-)" >/dev/null
-  echo "created ${GITEA}"
-else
-  echo "exists ${GITEA}"
 fi
 
-mirrors="$(api GET "/repos/${GITEA_OWNER}/${REPO}/push_mirrors" || echo '[]')"
-if ! grep -Fq 'github.com/presempathy-awb/swiftbar-one-screen-bottom' <<<"$mirrors"; then
-  api POST "/repos/${GITEA_OWNER}/${REPO}/push_mirrors" "$(cat <<EOF
-{
-  "interval": "8h0m0s",
-  "remote_address": "${GITHUB}",
-  "remote_username": "presempathy-awb",
-  "remote_password": "${GH_MIRROR_TOKEN}",
-  "sync_on_commit": true
-}
-EOF
-)" >/dev/null
-  echo "added Gitea push-mirror to GitHub (Gitea -> GitHub)"
-else
-  echo "Gitea push-mirror already present"
+export GIT_TERMINAL_PROMPT=0
+if [[ -z "${GIT_SSH_COMMAND:-}" ]]; then
+  export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=15"
 fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-git clone --mirror "$GITHUB" "$tmp/repo.git"
-git -C "$tmp/repo.git" push --mirror "https://oauth2:${GITEA_TOKEN}@${GITEA_HOST#https://}/${GITEA_OWNER}/${REPO}.git"
-echo "pushed GitHub -> Gitea"
+git init --bare -q "$tmp/sync.git"
+git --git-dir="$tmp/sync.git" remote add github "$GITHUB_URL"
+git --git-dir="$tmp/sync.git" remote add hidin "$HIDIN_URL"
 
-# GitHub Actions secret expression assembled at runtime.
-gha_secret='$'"{{ secrets.GITEA_TOKEN }}"
-workflow="$(cat <<YML
-name: sync-gitea
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-jobs:
-  gitea:
-    if: github.repository == 'presempathy-awb/swiftbar-one-screen-bottom'
-    runs-on: ubuntu-latest
-    concurrency:
-      group: sync-gitea
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Push main to Gitea
-        env:
-          GITEA_TOKEN: ${gha_secret}
-        run: |
-          set -euo pipefail
-          if [[ -z "\${GITEA_TOKEN:-}" ]]; then
-            echo "Set GitHub secret GITEA_TOKEN for this repo only." >&2
-            exit 1
-          fi
-          git push --porcelain \\
-            "https://oauth2:\${GITEA_TOKEN}@git.telpher.stream/awb/swiftbar-one-screen-bottom.git" \\
-            HEAD:refs/heads/main
-YML
-)"
-content="$(printf '%s' "$workflow" | python3 -c 'import base64,sys; print(base64.b64encode(sys.stdin.buffer.read()).decode())')"
-wf_api="https://api.github.com/repos/presempathy-awb/${REPO}/contents/.github/workflows/sync-gitea.yml"
-sha="$(curl -fsS -H "Authorization: Bearer ${GH_MIRROR_TOKEN}" -H "Accept: application/vnd.github+json" "$wf_api" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("sha",""))' || true)"
-body="$(python3 - "$content" "$sha" <<'PY'
-import json, sys
-content, sha = sys.argv[1], sys.argv[2]
-payload = {"message": "Add Gitea sync workflow for this repo only", "content": content}
-if sha:
-    payload["sha"] = sha
-print(json.dumps(payload))
-PY
-)"
-curl -fsS -X PUT \
-  -H "Authorization: Bearer ${GH_MIRROR_TOKEN}" \
-  -H "Accept: application/vnd.github+json" \
-  -H "Content-Type: application/json" \
-  -d "$body" \
-  "$wf_api" >/dev/null
-echo "GitHub -> Gitea ongoing: repo secret GITEA_TOKEN on presempathy-awb/${REPO}"
+if ! git --git-dir="$tmp/sync.git" fetch --quiet github \
+  "+refs/heads/${BRANCH}:refs/remotes/github/${BRANCH}"; then
+  echo "GitHub fetch failed" >&2
+  die_commands 1
+fi
+
+github_sha="$(git --git-dir="$tmp/sync.git" rev-parse "refs/remotes/github/${BRANCH}")"
+
+hidin_ok=0
+if git --git-dir="$tmp/sync.git" fetch --quiet hidin \
+  "+refs/heads/${BRANCH}:refs/remotes/hidin/${BRANCH}"; then
+  hidin_ok=1
+fi
+
+if [[ "$hidin_ok" -eq 0 ]]; then
+  if git --git-dir="$tmp/sync.git" push hidin \
+    "refs/remotes/github/${BRANCH}:refs/heads/${BRANCH}"; then
+    echo "hidin ${BRANCH} <- GitHub ${github_sha:0:12}"
+    exit 0
+  fi
+  echo "hidin SSH failed — Host hidin on the Mac, no tokens." >&2
+  die_commands 1
+fi
+
+hidin_sha="$(git --git-dir="$tmp/sync.git" rev-parse "refs/remotes/hidin/${BRANCH}")"
+
+if [[ "$github_sha" == "$hidin_sha" ]]; then
+  echo "GitHub and hidin ${BRANCH} match ${github_sha:0:12}"
+  exit 0
+fi
+
+if git --git-dir="$tmp/sync.git" merge-base --is-ancestor "$hidin_sha" "$github_sha"; then
+  git --git-dir="$tmp/sync.git" push hidin "refs/remotes/github/${BRANCH}:refs/heads/${BRANCH}"
+  echo "hidin ${BRANCH} <- GitHub ${github_sha:0:12}"
+  exit 0
+fi
+
+if git --git-dir="$tmp/sync.git" merge-base --is-ancestor "$github_sha" "$hidin_sha"; then
+  if git --git-dir="$tmp/sync.git" push github "refs/remotes/hidin/${BRANCH}:refs/heads/${BRANCH}"; then
+    echo "GitHub ${BRANCH} <- hidin ${hidin_sha:0:12}"
+    exit 0
+  fi
+  echo "hidin ${BRANCH} is ahead (${hidin_sha:0:12}). GitHub write is SSH on the Mac, not a token." >&2
+  cat >&2 <<EOF
+1. git remote add hidin ${HIDIN_URL}
+2. git fetch hidin
+3. git merge hidin/${BRANCH}
+4. git push origin ${BRANCH}
+EOF
+  exit 1
+fi
+
+echo "diverged: GitHub ${github_sha:0:12} hidin ${hidin_sha:0:12} — will not force" >&2
+exit 1

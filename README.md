@@ -9,11 +9,13 @@ On the Mac:
 4. ./apply.sh --apply
 ```
 
-Gitea `awb/swiftbar-one-screen-bottom` only (both ways with GitHub):
+Gitea `awb/swiftbar-one-screen-bottom` both ways with GitHub. SSH Host `hidin` only. No tokens.
 
 ```
-1. export GITEA_TOKEN=... GH_MIRROR_TOKEN=...
-2. curl -fsSL https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main/scripts/gitea-bidir.sh | bash
+1. git clone https://github.com/presempathy-awb/swiftbar-one-screen-bottom.git
+2. cd swiftbar-one-screen-bottom
+3. git remote add hidin git@hidin:awb/swiftbar-one-screen-bottom.git
+4. bash scripts/gitea-bidir.sh
 ```
 
-Re-run 2 after GitHub commits. Gitea commits push-mirror to GitHub on their own.
+Re-run 4 after commits on either side.
