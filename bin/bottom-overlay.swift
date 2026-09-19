@@ -9,6 +9,14 @@ func placement(forScreenCount count: Int) -> BarPlacement {
   count <= 1 ? .bottom : .hidden
 }
 
+func bottomBarRect(screenFrame: NSRect, height: CGFloat = 28) -> NSRect {
+  NSRect(x: screenFrame.minX, y: screenFrame.minY, width: screenFrame.width, height: height)
+}
+
+func closedFlagURL(pluginsDir: URL) -> URL {
+  pluginsDir.appendingPathComponent(".one-screen-bottom.closed")
+}
+
 struct PluginSnapshot {
   var url: URL
   var name: String
@@ -55,11 +63,12 @@ final class BottomBarController: NSObject {
       defer: false
     )
     panel.isFloatingPanel = true
-    panel.level = .statusBar
+    panel.level = .floating
     panel.isOpaque = false
     panel.backgroundColor = .clear
     panel.hasShadow = false
     panel.hidesOnDeactivate = false
+    panel.isMovable = false
     panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
     panel.titleVisibility = .hidden
     panel.titlebarAppearsTransparent = true
@@ -74,7 +83,7 @@ final class BottomBarController: NSObject {
     stack.orientation = .horizontal
     stack.alignment = .centerY
     stack.spacing = 10
-    stack.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+    stack.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 8)
     stack.translatesAutoresizingMaskIntoConstraints = false
 
     let clock = NSTextField(labelWithString: "")
@@ -96,19 +105,20 @@ final class BottomBarController: NSObject {
   }
 
   private func applyPlacement() {
+    if FileManager.default.fileExists(atPath: closedFlagURL(pluginsDir: pluginsDir).path) {
+      panel.orderOut(nil)
+      NSApp.terminate(nil)
+      return
+    }
     switch placement(forScreenCount: NSScreen.screens.count) {
     case .hidden:
       panel.orderOut(nil)
     case .bottom:
-      guard let screen = NSScreen.main ?? NSScreen.screens.first else {
+      guard let screen = NSScreen.screens.min(by: { $0.frame.minY < $1.frame.minY }) ?? NSScreen.screens.first else {
         panel.orderOut(nil)
         return
       }
-      let visible = screen.visibleFrame
-      panel.setFrame(
-        NSRect(x: visible.origin.x, y: visible.origin.y, width: visible.width, height: 28),
-        display: true
-      )
+      panel.setFrame(bottomBarRect(screenFrame: screen.frame), display: true)
       panel.orderFrontRegardless()
     }
   }
@@ -140,6 +150,28 @@ final class BottomBarController: NSObject {
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
     stack.addArrangedSubview(spacer)
     stack.addArrangedSubview(clockLabel)
+    stack.addArrangedSubview(makeCloseButton())
+  }
+
+  private func makeCloseButton() -> NSButton {
+    let button = NSButton(title: "×", target: self, action: #selector(closeBar(_:)))
+    button.bezelStyle = .inline
+    button.isBordered = false
+    button.font = NSFont.menuBarFont(ofSize: 14)
+    button.toolTip = "Close bottom bar"
+    return button
+  }
+
+  @objc private func closeBar(_: NSButton) {
+    FileManager.default.createFile(
+      atPath: closedFlagURL(pluginsDir: pluginsDir).path,
+      contents: Data(),
+      attributes: nil
+    )
+    if let url = URL(string: "swiftbar://refreshallplugins") {
+      NSWorkspace.shared.open(url)
+    }
+    NSApp.terminate(nil)
   }
 
   @objc private func pluginClicked(_ sender: NSButton) {
@@ -288,7 +320,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   var controller: BottomBarController?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
-    controller = BottomBarController(pluginsDir: pluginsDirectory(), marker: markerArgument())
+    let dir = pluginsDirectory()
+    if FileManager.default.fileExists(atPath: closedFlagURL(pluginsDir: dir).path) {
+      NSApp.terminate(nil)
+      return
+    }
+    controller = BottomBarController(pluginsDir: dir, marker: markerArgument())
   }
 }
 
