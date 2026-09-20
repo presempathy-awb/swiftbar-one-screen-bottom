@@ -1,6 +1,11 @@
 import Cocoa
 import ApplicationServices
 
+let overlayRev = "v7"
+let swiftBarDefaultsDomain = "com.ameba.SwiftBar"
+let stubFolderName = ".one-screen-bottom-stub"
+let savedPluginDirName = ".one-screen-bottom.saved-plugin-dir"
+
 enum BarPlacement {
   case bottom
   case hidden
@@ -26,7 +31,102 @@ func placement(screens: [NSScreen]) -> BarPlacement {
 
 func swiftBarBundleID() -> String { "com.ameba.SwiftBar" }
 
-func hideTopSwiftBar() {
+func runDefaults(_ arguments: [String]) -> String {
+  let proc = Process()
+  proc.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
+  proc.arguments = arguments
+  let out = Pipe()
+  proc.standardOutput = out
+  proc.standardError = Pipe()
+  do { try proc.run() } catch { return "" }
+  proc.waitUntilExit()
+  let data = out.fileHandleForReading.readDataToEndOfFile()
+  return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+}
+
+func readSwiftBarDefault(_ key: String) -> String {
+  runDefaults(["read", swiftBarDefaultsDomain, key])
+}
+
+func writeSwiftBarDefault(_ key: String, string value: String) {
+  _ = runDefaults(["write", swiftBarDefaultsDomain, key, value])
+}
+
+func writeSwiftBarDefault(_ key: String, bool value: Bool) {
+  _ = runDefaults(["write", swiftBarDefaultsDomain, key, "-bool", value ? "true" : "false"])
+}
+
+func stubDirectory(_ pluginsDir: URL) -> URL {
+  pluginsDir.appendingPathComponent(stubFolderName)
+}
+
+func savedPluginDirURL(_ pluginsDir: URL) -> URL {
+  pluginsDir.appendingPathComponent(savedPluginDirName)
+}
+
+func pathLooksLikeStub(_ path: String) -> Bool {
+  path.contains("one-screen-bottom-stub")
+}
+
+func shellQuoted(_ path: String) -> String {
+  "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+}
+
+func writeStubKeeper(pluginsDir: URL) {
+  let stub = stubDirectory(pluginsDir)
+  try? FileManager.default.createDirectory(at: stub, withIntermediateDirectories: true)
+  let quoted = shellQuoted(pluginsDir.path)
+  let body = """
+  #!/bin/bash
+  # <swiftbar.hideAbout>true</swiftbar.hideAbout>
+  # <swiftbar.hideRunInTerminal>true</swiftbar.hideRunInTerminal>
+  # <swiftbar.hideLastUpdated>true</swiftbar.hideLastUpdated>
+  # <swiftbar.hideDisablePlugin>true</swiftbar.hideDisablePlugin>
+  # <swiftbar.hideSwiftBar>true</swiftbar.hideSwiftBar>
+  REAL=\(quoted)
+  export SWIFTBAR_PLUGINS_PATH="$REAL"
+  if [[ -x "$REAL/one-screen-bottom.5s.sh" ]]; then
+    exec "$REAL/one-screen-bottom.5s.sh"
+  fi
+  """
+  let keeper = stub.appendingPathComponent("one-screen-bottom.5s.sh")
+  try? body.write(to: keeper, atomically: true, encoding: .utf8)
+  try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: keeper.path)
+}
+
+func parkTopSwiftBar(pluginsDir: URL) {
+  writeStubKeeper(pluginsDir: pluginsDir)
+  let saved = savedPluginDirURL(pluginsDir)
+  if !FileManager.default.fileExists(atPath: saved.path) {
+    var current = readSwiftBarDefault("PluginDirectory")
+    if current.isEmpty || pathLooksLikeStub(current) {
+      current = pluginsDir.path
+    }
+    try? current.write(to: saved, atomically: true, encoding: .utf8)
+  }
+  writeSwiftBarDefault("PluginDirectory", string: stubDirectory(pluginsDir).path)
+  writeSwiftBarDefault("StealthMode", bool: true)
+}
+
+func unparkTopSwiftBar(pluginsDir: URL) {
+  let saved = savedPluginDirURL(pluginsDir)
+  var restored = pluginsDir.path
+  if let text = try? String(contentsOf: saved, encoding: .utf8) {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !trimmed.isEmpty && !pathLooksLikeStub(trimmed) {
+      restored = trimmed
+    }
+  }
+  writeSwiftBarDefault("PluginDirectory", string: restored)
+  writeSwiftBarDefault("StealthMode", bool: false)
+  try? FileManager.default.removeItem(at: saved)
+}
+
+func hideTopSwiftBar(pluginsDir: URL) {
+  if pathLooksLikeStub(readSwiftBarDefault("PluginDirectory")) {
+    return
+  }
+  parkTopSwiftBar(pluginsDir: pluginsDir)
   for app in NSWorkspace.shared.runningApplications where app.bundleIdentifier == swiftBarBundleID() {
     app.forceTerminate()
   }
@@ -40,12 +140,36 @@ func showTopSwiftBar() {
   NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
 }
 
+func restoreTopSwiftBar(pluginsDir: URL) {
+  unparkTopSwiftBar(pluginsDir: pluginsDir)
+  showTopSwiftBar()
+}
+
+func hideDockForBar() {
+  var opts = NSApp.presentationOptions
+  if !opts.contains(.autoHideDock) {
+    opts.insert(.autoHideDock)
+    NSApp.presentationOptions = opts
+  }
+}
+
+func restoreDock() {
+  var opts = NSApp.presentationOptions
+  if opts.contains(.autoHideDock) {
+    opts.remove(.autoHideDock)
+    NSApp.presentationOptions = opts
+  }
+}
+
 func bottomBarRect(screenFrame: NSRect, height: CGFloat = 28) -> NSRect {
   NSRect(x: screenFrame.minX, y: screenFrame.minY, width: screenFrame.width, height: height)
 }
 
-func barWindowLevel() -> NSWindow.Level {
-  NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
+func barWindowLevel(screen: NSScreen) -> NSWindow.Level {
+  if screen.visibleFrame.minY > screen.frame.minY + 8 {
+    return NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)))
+  }
+  return .normal
 }
 
 func frameIsOnTopHalf(_ frame: NSRect, screen: NSRect) -> Bool {
@@ -55,12 +179,15 @@ func frameIsOnTopHalf(_ frame: NSRect, screen: NSRect) -> Bool {
 func pinToBottom(_ window: NSWindow, screen: NSScreen) {
   let height = window.frame.height > 1 ? window.frame.height : 28
   let rect = bottomBarRect(screenFrame: screen.frame, height: height)
-  window.level = barWindowLevel()
+  window.level = barWindowLevel(screen: screen)
   window.setFrame(rect, display: true)
   window.setFrameOrigin(rect.origin)
   if frameIsOnTopHalf(window.frame, screen: screen.frame) || abs(window.frame.minY - rect.minY) > 1 {
     window.setFrame(rect, display: true)
     window.setFrameOrigin(NSPoint(x: rect.minX, y: rect.minY))
+  }
+  if window.level == .normal {
+    window.orderBack(nil)
   }
 }
 
@@ -283,12 +410,13 @@ final class BottomBarController: NSObject {
       backing: .buffered,
       defer: false
     )
-    panel.level = barWindowLevel()
+    panel.level = .normal
     panel.isOpaque = false
     panel.backgroundColor = .clear
     panel.hasShadow = false
     panel.hidesOnDeactivate = false
     panel.isMovable = false
+    panel.isRestorable = false
     panel.animationBehavior = .none
     panel.collectionBehavior = [.canJoinAllSpaces, .ignoresCycle]
     panel.titleVisibility = .hidden
@@ -328,25 +456,31 @@ final class BottomBarController: NSObject {
   private func applyPlacement() {
     if FileManager.default.fileExists(atPath: closedFlagURL(pluginsDir: pluginsDir).path) {
       panel.orderOut(nil)
-      showTopSwiftBar()
+      restoreDock()
+      restoreTopSwiftBar(pluginsDir: pluginsDir)
       NSApp.terminate(nil)
       return
     }
     switch placement(screens: NSScreen.screens) {
     case .hidden:
       panel.orderOut(nil)
-      showTopSwiftBar()
+      restoreDock()
+      restoreTopSwiftBar(pluginsDir: pluginsDir)
     case .bottom:
       guard let screen = NSScreen.screens.min(by: { $0.frame.minY < $1.frame.minY }) ?? NSScreen.screens.first else {
         panel.orderOut(nil)
         return
       }
-      hideTopSwiftBar()
+      hideDockForBar()
+      hideTopSwiftBar(pluginsDir: pluginsDir)
       pinToBottom(panel, screen: screen)
       if !panel.isVisible {
         panel.orderFront(nil)
+        pinToBottom(panel, screen: screen)
       }
-      let line = "pin screens=\(NSScreen.screens.count) y=\(Int(panel.frame.minY)) stacked=\(hasStackedLowerDisplay(NSScreen.screens))\n"
+      let line =
+        "overlay rev=\(overlayRev) pin screens=\(NSScreen.screens.count) y=\(Int(panel.frame.minY)) "
+        + "level=\(panel.level.rawValue) stacked=\(hasStackedLowerDisplay(NSScreen.screens))\n"
       if line != lastPinLog {
         lastPinLog = line
         FileHandle.standardError.write(Data(line.utf8))
@@ -404,10 +538,8 @@ final class BottomBarController: NSObject {
       contents: Data(),
       attributes: nil
     )
-    showTopSwiftBar()
-    if let url = URL(string: "swiftbar://refreshallplugins") {
-      NSWorkspace.shared.open(url)
-    }
+    restoreDock()
+    restoreTopSwiftBar(pluginsDir: pluginsDir)
     NSApp.terminate(nil)
   }
 
@@ -536,9 +668,19 @@ func pluginsDirectory() -> URL {
     }
     i += 1
   }
-  if let dir { return URL(fileURLWithPath: dir) }
+  if let dir {
+    let url = URL(fileURLWithPath: dir)
+    if pathLooksLikeStub(url.path) {
+      return url.deletingLastPathComponent()
+    }
+    return url
+  }
   if let env = ProcessInfo.processInfo.environment["SWIFTBAR_PLUGINS_PATH"], !env.isEmpty {
-    return URL(fileURLWithPath: env)
+    let url = URL(fileURLWithPath: env)
+    if pathLooksLikeStub(url.path) {
+      return url.deletingLastPathComponent()
+    }
+    return url
   }
   return URL(fileURLWithPath: NSHomeDirectory())
     .appendingPathComponent(".config/swiftbar/plugins")
@@ -567,7 +709,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
-    showTopSwiftBar()
+    restoreDock()
+    restoreTopSwiftBar(pluginsDir: pluginsDirectory())
   }
 }
 
