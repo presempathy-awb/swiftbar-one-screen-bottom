@@ -9,12 +9,21 @@ func placement(forScreenCount count: Int) -> BarPlacement {
   count <= 1 ? .bottom : .hidden
 }
 
-func bottomBarRect(screenFrame: NSRect, height: CGFloat = 28) -> NSRect {
-  NSRect(x: screenFrame.minX, y: screenFrame.minY, width: screenFrame.width, height: height)
+func bottomBarRect(visibleFrame: NSRect, height: CGFloat = 28) -> NSRect {
+  NSRect(x: visibleFrame.minX, y: visibleFrame.minY, width: visibleFrame.width, height: height)
 }
 
 func closedFlagURL(pluginsDir: URL) -> URL {
   pluginsDir.appendingPathComponent(".one-screen-bottom.closed")
+}
+
+final class BottomWindow: NSWindow {
+  override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+    frameRect
+  }
+
+  override var canBecomeKey: Bool { false }
+  override var canBecomeMain: Bool { false }
 }
 
 struct PluginSnapshot {
@@ -26,7 +35,7 @@ struct PluginSnapshot {
 
 final class BottomBarController: NSObject {
   private let pluginsDir: URL
-  private var panel: NSPanel!
+  private var panel: NSWindow!
   private var stack: NSStackView!
   private var clockLabel: NSTextField!
   private var snapshots: [PluginSnapshot] = []
@@ -42,6 +51,7 @@ final class BottomBarController: NSObject {
     tickClock()
     clockTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
       self?.tickClock()
+      self?.applyPlacement()
     }
     pluginTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
       self?.refreshPlugins()
@@ -56,20 +66,20 @@ final class BottomBarController: NSObject {
   }
 
   private func buildPanel() {
-    let panel = NSPanel(
+    let panel = BottomWindow(
       contentRect: NSRect(x: 0, y: 0, width: 800, height: 28),
-      styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
+      styleMask: .borderless,
       backing: .buffered,
       defer: false
     )
-    panel.isFloatingPanel = true
-    panel.level = .floating
+    panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
     panel.isOpaque = false
     panel.backgroundColor = .clear
     panel.hasShadow = false
     panel.hidesOnDeactivate = false
     panel.isMovable = false
-    panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+    panel.animationBehavior = .none
+    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
     panel.titleVisibility = .hidden
     panel.titlebarAppearsTransparent = true
 
@@ -118,7 +128,11 @@ final class BottomBarController: NSObject {
         panel.orderOut(nil)
         return
       }
-      panel.setFrame(bottomBarRect(screenFrame: screen.frame), display: true)
+      let rect = bottomBarRect(visibleFrame: screen.visibleFrame)
+      panel.setFrame(rect, display: true)
+      if abs(panel.frame.minY - rect.minY) > 1 {
+        panel.setFrameOrigin(NSPoint(x: rect.minX, y: rect.minY))
+      }
       panel.orderFrontRegardless()
     }
   }
@@ -303,7 +317,8 @@ func pluginsDirectory() -> URL {
   if let env = ProcessInfo.processInfo.environment["SWIFTBAR_PLUGINS_PATH"], !env.isEmpty {
     return URL(fileURLWithPath: env)
   }
-  return URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".config/swiftbar")
+  return URL(fileURLWithPath: NSHomeDirectory())
+    .appendingPathComponent(".config/swiftbar/plugins")
 }
 
 func markerArgument() -> String {
