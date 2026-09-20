@@ -10,6 +10,36 @@ func placement(forScreenCount count: Int) -> BarPlacement {
   count <= 1 ? .bottom : .hidden
 }
 
+func hasStackedLowerDisplay(_ screens: [NSScreen]) -> Bool {
+  guard screens.count >= 2 else { return false }
+  for (i, a) in screens.enumerated() {
+    for (j, b) in screens.enumerated() where i != j {
+      if b.frame.maxY <= a.frame.minY + 16 { return true }
+    }
+  }
+  return false
+}
+
+func placement(screens: [NSScreen]) -> BarPlacement {
+  hasStackedLowerDisplay(screens) ? .hidden : .bottom
+}
+
+func swiftBarBundleID() -> String { "com.ameba.SwiftBar" }
+
+func hideTopSwiftBar() {
+  for app in NSWorkspace.shared.runningApplications where app.bundleIdentifier == swiftBarBundleID() {
+    app.forceTerminate()
+  }
+}
+
+func showTopSwiftBar() {
+  if NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == swiftBarBundleID() }) {
+    return
+  }
+  guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: swiftBarBundleID()) else { return }
+  NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+}
+
 func bottomBarRect(screenFrame: NSRect, height: CGFloat = 28) -> NSRect {
   NSRect(x: screenFrame.minX, y: screenFrame.minY, width: screenFrame.width, height: height)
 }
@@ -221,6 +251,7 @@ final class BottomBarController: NSObject {
   private var snapshots: [PluginSnapshot] = []
   private var clockTimer: Timer?
   private var pluginTimer: Timer?
+  private var lastPinLog = ""
 
   init(pluginsDir: URL, marker: String) {
     self.pluginsDir = pluginsDir
@@ -297,20 +328,28 @@ final class BottomBarController: NSObject {
   private func applyPlacement() {
     if FileManager.default.fileExists(atPath: closedFlagURL(pluginsDir: pluginsDir).path) {
       panel.orderOut(nil)
+      showTopSwiftBar()
       NSApp.terminate(nil)
       return
     }
-    switch placement(forScreenCount: NSScreen.screens.count) {
+    switch placement(screens: NSScreen.screens) {
     case .hidden:
       panel.orderOut(nil)
+      showTopSwiftBar()
     case .bottom:
       guard let screen = NSScreen.screens.min(by: { $0.frame.minY < $1.frame.minY }) ?? NSScreen.screens.first else {
         panel.orderOut(nil)
         return
       }
+      hideTopSwiftBar()
       pinToBottom(panel, screen: screen)
       if !panel.isVisible {
         panel.orderFront(nil)
+      }
+      let line = "pin screens=\(NSScreen.screens.count) y=\(Int(panel.frame.minY)) stacked=\(hasStackedLowerDisplay(NSScreen.screens))\n"
+      if line != lastPinLog {
+        lastPinLog = line
+        FileHandle.standardError.write(Data(line.utf8))
       }
       let rect = bottomBarRect(screenFrame: screen.frame)
       if barProtrudesIntoWorkArea(screenFrame: screen.frame, visibleFrame: screen.visibleFrame) {
@@ -365,6 +404,7 @@ final class BottomBarController: NSObject {
       contents: Data(),
       attributes: nil
     )
+    showTopSwiftBar()
     if let url = URL(string: "swiftbar://refreshallplugins") {
       NSWorkspace.shared.open(url)
     }
@@ -524,6 +564,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       return
     }
     controller = BottomBarController(pluginsDir: dir, marker: markerArgument())
+  }
+
+  func applicationWillTerminate(_ notification: Notification) {
+    showTopSwiftBar()
   }
 }
 
