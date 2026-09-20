@@ -5,8 +5,9 @@
 # <swiftbar.hideDisablePlugin>true</swiftbar.hideDisablePlugin>
 # <swiftbar.hideSwiftBar>true</swiftbar.hideSwiftBar>
 #
-# Hidden. Starts a bottom strip only when this Mac has one display.
-# Two monitors: overlay hides; your existing lower-display SwiftBar stays.
+# Hidden. Starts a bottom strip when there is no display stacked below.
+# Stacked dual monitors: overlay hides; your lower-display SwiftBar stays.
+# While the strip is up, SwiftBar itself is quit so extras leave the top menu bar.
 # Closed (×) or urgent memory pressure: do not start.
 
 set -euo pipefail

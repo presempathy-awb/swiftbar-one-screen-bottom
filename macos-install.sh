@@ -8,7 +8,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 MARKER="swiftbar-one-screen-bottom"
 DEFAULT_MAC_PLUGINS="/Users/andrew/.config/swiftbar/plugins"
 BASE="https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main"
-INSTALL_REV="v5"
+INSTALL_REV="v6"
 MAC_CURL="${BASE}/macos-install.sh?${INSTALL_REV}"
 
 mac_commands() {
@@ -98,6 +98,7 @@ have_local_sources() {
      && -f "$ROOT/one-screen-bottom-launch.5s.sh" \
      && -f "$ROOT/lib/bar-state.sh" \
      && -f "$ROOT/bin/bottom-overlay.swift" ]] \
+    && grep -Fq 'hideTopSwiftBar' "$ROOT/bin/bottom-overlay.swift" \
     && grep -Fq 'pinToBottom' "$ROOT/bin/bottom-overlay.swift" \
     && grep -Fq 'desktopIconWindow' "$ROOT/bin/bottom-overlay.swift" \
     && ! grep -Fq 'level = .statusBar' "$ROOT/bin/bottom-overlay.swift" \
@@ -147,8 +148,6 @@ nohup "$BIN" --plugins-dir "$DEST" --marker "$MARKER" \
   >/tmp/swiftbar-bottom-overlay.out 2>&1 &
 disown || true
 
-open "swiftbar://refreshallplugins" >/dev/null 2>&1 || true
-
 if [[ -f "$0" && "$0" != *bash && -r "$0" ]]; then
   src_dir="$(cd "$(dirname "$0")" && pwd)"
   dest_dir="$(cd "$DEST" && pwd)"
@@ -158,5 +157,5 @@ if [[ -f "$0" && "$0" != *bash && -r "$0" ]]; then
 fi
 
 echo "Installed into $DEST"
-echo "One display: strip at the physical bottom (under app windows). Two displays: strip hides."
+echo "One display: strip at the physical bottom; SwiftBar extras leave the menu bar. Two stacked displays: strip hides."
 echo "Closed: ⬇ in SwiftBar reopens. It will not auto-open while closed."
