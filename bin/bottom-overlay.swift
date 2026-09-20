@@ -1,4 +1,5 @@
 import Cocoa
+import ApplicationServices
 
 enum BarPlacement {
   case bottom
@@ -11,6 +12,165 @@ func placement(forScreenCount count: Int) -> BarPlacement {
 
 func bottomBarRect(screenFrame: NSRect, height: CGFloat = 28) -> NSRect {
   NSRect(x: screenFrame.minX, y: screenFrame.minY, width: screenFrame.width, height: height)
+}
+
+func workAreaMinY(screenFrame: NSRect, visibleFrame: NSRect, barHeight: CGFloat = 28) -> CGFloat {
+  max(visibleFrame.minY, screenFrame.minY + barHeight)
+}
+
+func barProtrudesIntoWorkArea(screenFrame: NSRect, visibleFrame: NSRect, barHeight: CGFloat = 28) -> Bool {
+  workAreaMinY(screenFrame: screenFrame, visibleFrame: visibleFrame, barHeight: barHeight) > visibleFrame.minY + 0.5
+}
+
+func windowNeedsLift(window: NSRect, bar: NSRect, screen: NSRect) -> Bool {
+  if windowIsFullscreenLike(window, screen: screen) { return false }
+  if window.minY >= bar.maxY - 1 { return false }
+  if window.maxY <= bar.maxY + 1 { return false }
+  return window.intersects(bar)
+}
+
+func windowIsFullscreenLike(_ window: NSRect, screen: NSRect) -> Bool {
+  abs(window.minX - screen.minX) < 4
+    && abs(window.maxX - screen.maxX) < 4
+    && abs(window.minY - screen.minY) < 4
+    && abs(window.maxY - screen.maxY) < 4
+}
+
+func quartzRect(fromAppKit rect: NSRect) -> CGRect {
+  let globalMaxY = NSScreen.screens.map(\.frame.maxY).max() ?? rect.maxY
+  return CGRect(x: rect.minX, y: globalMaxY - rect.maxY, width: rect.width, height: rect.height)
+}
+
+func quartzBottomLimit(barTopAppKit: CGFloat) -> CGFloat {
+  let globalMaxY = NSScreen.screens.map(\.frame.maxY).max() ?? barTopAppKit
+  return globalMaxY - barTopAppKit
+}
+
+func appKitRect(fromQuartz rect: CGRect) -> NSRect {
+  let globalMaxY = NSScreen.screens.map(\.frame.maxY).max() ?? (rect.minY + rect.height)
+  return NSRect(x: rect.minX, y: globalMaxY - rect.maxY, width: rect.width, height: rect.height)
+}
+
+func anyOnscreenWindowOverlaps(_ bar: NSRect, on screen: NSScreen) -> Bool {
+  let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+  let selfPid = Int(ProcessInfo.processInfo.processIdentifier)
+  for item in info {
+    guard let pid = item[kCGWindowOwnerPID as String] as? Int, pid != selfPid else { continue }
+    guard let layer = item[kCGWindowLayer as String] as? Int, layer == 0 else { continue }
+    guard let bounds = item[kCGWindowBounds as String] as? [String: CGFloat] else { continue }
+    let quartz = CGRect(
+      x: bounds["X"] ?? 0,
+      y: bounds["Y"] ?? 0,
+      width: bounds["Width"] ?? 0,
+      height: bounds["Height"] ?? 0
+    )
+    let window = appKitRect(fromQuartz: quartz)
+    if windowNeedsLift(window: window, bar: bar, screen: screen.frame) { return true }
+  }
+  return false
+}
+
+func promptAXOnce(pluginsDir: URL) {
+  if AXIsProcessTrusted() { return }
+  let flag = pluginsDir.appendingPathComponent(".one-screen-bottom.ax-prompted")
+  if FileManager.default.fileExists(atPath: flag.path) { return }
+  FileManager.default.createFile(atPath: flag.path, contents: Data(), attributes: nil)
+  let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+  _ = AXIsProcessTrustedWithOptions(opts)
+}
+
+func liftStandardWindows(aboveBar bar: NSRect, on screen: NSScreen) {
+  guard AXIsProcessTrusted() else { return }
+  guard anyOnscreenWindowOverlaps(bar, on: screen) else { return }
+  let maxBottom = quartzBottomLimit(barTopAppKit: bar.maxY)
+  let screenQuartz = quartzRect(fromAppKit: screen.frame)
+  let selfPid = ProcessInfo.processInfo.processIdentifier
+
+  for app in NSWorkspace.shared.runningApplications {
+    if app.isTerminated { continue }
+    if app.processIdentifier == selfPid { continue }
+    if app.bundleIdentifier == "com.apple.dock" { continue }
+    let appEl = AXUIElementCreateApplication(app.processIdentifier)
+    var windowsRef: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+          let windows = windowsRef as? [AXUIElement]
+    else { continue }
+    for win in windows {
+      liftWindowIfNeeded(win, maxQuartzBottom: maxBottom, screenQuartz: screenQuartz, bar: bar, screen: screen.frame)
+    }
+  }
+}
+
+func liftWindowIfNeeded(
+  _ win: AXUIElement,
+  maxQuartzBottom: CGFloat,
+  screenQuartz: CGRect,
+  bar: NSRect,
+  screen: NSRect
+) {
+  var roleRef: CFTypeRef?
+  guard AXUIElementCopyAttributeValue(win, kAXRoleAttribute as CFString, &roleRef) == .success,
+        let role = roleRef as? String,
+        role == (kAXWindowRole as String)
+  else { return }
+
+  var subRef: CFTypeRef?
+  if AXUIElementCopyAttributeValue(win, kAXSubroleAttribute as CFString, &subRef) == .success,
+     let subrole = subRef as? String
+  {
+    let skip: Set<String> = [
+      "AXDialog",
+      "AXSystemDialog",
+      "AXFloatingWindow",
+      "AXPictureInPictureWindow",
+      "AXUnknown",
+    ]
+    if skip.contains(subrole) { return }
+  }
+
+  var fullRef: CFTypeRef?
+  if AXUIElementCopyAttributeValue(win, "AXFullScreen" as CFString, &fullRef) == .success,
+     let full = fullRef as? Bool, full
+  {
+    return
+  }
+
+  var minRef: CFTypeRef?
+  if AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute as CFString, &minRef) == .success,
+     let minimized = minRef as? Bool, minimized
+  {
+    return
+  }
+
+  var posRef: CFTypeRef?
+  var sizeRef: CFTypeRef?
+  guard AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posRef) == .success,
+        AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &sizeRef) == .success,
+        let posAX = posRef as? AXValue,
+        let sizeAX = sizeRef as? AXValue
+  else { return }
+
+  var origin = CGPoint.zero
+  var size = CGSize.zero
+  guard AXValueGetValue(posAX, .cgPoint, &origin), AXValueGetValue(sizeAX, .cgSize, &size) else { return }
+
+  let quartzWindow = CGRect(origin: origin, size: size)
+  if windowIsFullscreenLike(
+    NSRect(x: quartzWindow.minX, y: quartzWindow.minY, width: quartzWindow.width, height: quartzWindow.height),
+    screen: NSRect(x: screenQuartz.minX, y: screenQuartz.minY, width: screenQuartz.width, height: screenQuartz.height)
+  ) {
+    return
+  }
+
+  let appKitWindow = appKitRect(fromQuartz: quartzWindow)
+  guard windowNeedsLift(window: appKitWindow, bar: bar, screen: screen) else { return }
+
+  let newHeight = maxQuartzBottom - origin.y
+  if newHeight < 80 { return }
+  if abs(newHeight - size.height) < 2 { return }
+  var lifted = CGSize(width: size.width, height: newHeight)
+  guard let encoded = AXValueCreate(.cgSize, &lifted) else { return }
+  AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, encoded)
 }
 
 func closedFlagURL(pluginsDir: URL) -> URL {
@@ -134,6 +294,10 @@ final class BottomBarController: NSObject {
         panel.setFrameOrigin(NSPoint(x: rect.minX, y: rect.minY))
       }
       panel.orderFrontRegardless()
+      if barProtrudesIntoWorkArea(screenFrame: screen.frame, visibleFrame: screen.visibleFrame) {
+        promptAXOnce(pluginsDir: pluginsDir)
+      }
+      liftStandardWindows(aboveBar: rect, on: screen)
     }
   }
 
@@ -176,7 +340,7 @@ final class BottomBarController: NSObject {
     return button
   }
 
-  @objc private func closeBar(_: NSButton) {
+  private func closeBar(_ sender: NSButton) {
     FileManager.default.createFile(
       atPath: closedFlagURL(pluginsDir: pluginsDir).path,
       contents: Data(),
@@ -188,7 +352,7 @@ final class BottomBarController: NSObject {
     NSApp.terminate(nil)
   }
 
-  @objc private func pluginClicked(_ sender: NSButton) {
+  private func pluginClicked(_ sender: NSButton) {
     guard snapshots.indices.contains(sender.tag) else { return }
     let plugin = snapshots[sender.tag]
     let menu = NSMenu()
@@ -278,7 +442,7 @@ final class BottomBarController: NSObject {
 
 func pluginDisplayName(_ filename: String) -> String {
   var base = (filename as NSString).deletingPathExtension
-  if let range = base.range(of: #"\.\d+[smhd]$"#, options: .regularExpression) {
+  if let range = base.range(of: #"\.\d+[smhd]$#", options: .regularExpression) {
     base.removeSubrange(range)
   }
   return base
