@@ -33,7 +33,7 @@ swiftbar_write_stub_keeper() {
 # <swiftbar.hideSwiftBar>true</swiftbar.hideSwiftBar>
 REAL=$(printf '%q' "$dest")
 export SWIFTBAR_PLUGINS_PATH="\$REAL"
- if [[ -x "\$REAL/one-screen-bottom.5s.sh" ]]; then
+if [[ -x "\$REAL/one-screen-bottom.5s.sh" ]]; then
   exec "\$REAL/one-screen-bottom.5s.sh"
 fi
 KEEP
