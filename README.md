@@ -1,15 +1,21 @@
 # SwiftBar — bottom on one screen
 
-One display: SwiftBar extras leave the top menu bar and a strip sits on the physical bottom (Dock may overlap it). App windows stay above the strip. Fullscreen can cover it. × closes it, brings SwiftBar back, and keeps the strip closed. ⬇ in SwiftBar shows only while it is down.
+macOS cannot move menu extras off the top bar. A SwiftBar refresh also cannot — it puts them back. This installer parks SwiftBar on an empty stub (StealthMode) so the top extras go away, and draws those plugins on a strip at the physical bottom of the display.
 
-Stacked displays (one below the other): strip hides. Your lower-display menu bar stays.
+The Dock autohides while the strip is up so the strip is visible at the bottom; app windows stay above it. Fullscreen can cover it. × closes the strip, restores SwiftBar, and keeps it closed. ⬇ in SwiftBar shows only while the strip is down.
+
+Stacked displays (one below the other): strip hides and SwiftBar comes back on the lower display’s menu bar.
+
+Do not refresh SwiftBar to update this. Re-run apply:
 
 ```
 cd /Users/andrew/.config/swiftbar/plugins
-curl -fsSL "https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main/macos-install.sh?v6" -o apply.sh
+curl -fsSL "https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main/macos-install.sh?v7" -o apply.sh
 chmod +x apply.sh
 ./apply.sh --apply
 ```
+
+Expect: “SwiftBar extras are parked off the top menu bar.” Check `/tmp/swiftbar-bottom-overlay.out` for `overlay rev=v7` and a small `y=` (bottom), not the top of the screen.
 
 Gitea `awb/swiftbar-one-screen-bottom` both ways with GitHub. SSH Host `hidin` only. No tokens.
 

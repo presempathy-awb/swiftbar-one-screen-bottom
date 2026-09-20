@@ -7,8 +7,8 @@
 #
 # Hidden. Starts a bottom strip when there is no display stacked below.
 # Stacked dual monitors: overlay hides; your lower-display SwiftBar stays.
-# While the strip is up, SwiftBar itself is quit so extras leave the top menu bar.
-# Closed (×) or urgent memory pressure: do not start.
+# While the strip is up, SwiftBar is pointed at an empty stub (StealthMode)
+# so extras leave the top menu bar. Closed (×) or urgent memory: do not start.
 
 set -euo pipefail
 
