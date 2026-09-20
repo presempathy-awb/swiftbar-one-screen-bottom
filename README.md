@@ -6,16 +6,16 @@ The Dock autohides while the strip is up so the strip is visible at the bottom; 
 
 Stacked displays (one below the other): strip hides and SwiftBar comes back on the lower display’s menu bar.
 
-Do not refresh SwiftBar to update this. Re-run apply (`?v8`, not `?v5`):
+Do not refresh SwiftBar to update this. Re-run apply (`?v9`):
 
 ```
 cd /Users/andrew/.config/swiftbar/plugins
-curl -fsSL "https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main/macos-install.sh?v8" -o apply.sh
+curl -fsSL "https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main/macos-install.sh?v9" -o apply.sh
 chmod +x apply.sh
 ./apply.sh --apply
 ```
 
-Expect: “SwiftBar extras are parked off the top menu bar.” If swiftc fails, the compiler log prints in the same terminal. Check `/tmp/swiftbar-bottom-overlay.out` for `overlay rev=v8` and a small `y=` (bottom), not the top of the screen.
+Expect: “SwiftBar extras are parked off the top menu bar.” If swiftc fails, the compiler log prints in the same terminal. Check `/tmp/swiftbar-bottom-overlay.out` for `overlay rev=v9` and a small `y=` (bottom), not the top of the screen.
 
 Gitea `awb/swiftbar-one-screen-bottom` both ways with GitHub. SSH Host `hidin` only. No tokens.
 
