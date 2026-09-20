@@ -151,5 +151,5 @@ if [[ -f "$0" && "$0" != *bash && -r "$0" ]]; then
 fi
 
 echo "Installed into $DEST"
-echo "One display: bottom strip with × to close. Two displays: strip hides."
+echo "One display: bottom strip (overlaps Dock). Two displays: strip hides."
 echo "Closed: ⬇ in SwiftBar reopens. It will not auto-open while closed."
