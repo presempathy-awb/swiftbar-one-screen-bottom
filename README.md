@@ -1,6 +1,6 @@
 # SwiftBar — bottom on one screen
 
-One display: strip sits on the physical bottom of the screen and may overlap the Dock. App windows stay in the work area above it when they honor that area (fullscreen can cover it). × closes it and keeps it closed. ⬇ in SwiftBar shows only while it is down.
+One display: strip sits on the physical bottom of the screen and may overlap the Dock. App windows stay above that strip when possible (fullscreen can cover it). × closes it and keeps it closed. ⬇ in SwiftBar shows only while it is down.
 
 Two displays: strip hides. Your lower-display menu bar stays.
 

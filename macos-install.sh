@@ -95,6 +95,7 @@ have_local_sources() {
      && -f "$ROOT/lib/bar-state.sh" \
      && -f "$ROOT/bin/bottom-overlay.swift" ]] \
     && grep -Fq 'constrainFrameRect' "$ROOT/bin/bottom-overlay.swift" \
+    && grep -Fq 'workAreaMinY' "$ROOT/bin/bottom-overlay.swift" \
     && ! grep -Fq 'level = .statusBar' "$ROOT/bin/bottom-overlay.swift"
 }
 
@@ -124,11 +125,13 @@ bar_mark_open "$DEST"
 
 BIN="$DEST/bin/bottom-overlay"
 SRC="$DEST/bin/bottom-overlay.swift"
-if ! /usr/bin/swiftc -O -o "$BIN" "$SRC" 2>/tmp/swiftbar-bottom-overlay.log; then
-  echo "Installed keeper into $DEST, but swiftc failed. See /tmp/swiftbar-bottom-overlay.log" >&2
-  echo "SwiftBar will retry compile on refresh." >&2
-  open "swiftbar://refreshallplugins" >/dev/null 2>&1 || true
-  exit 1
+if [[ ! -x "$BIN" || "$SRC" -nt "$BIN" ]]; then
+  if ! /usr/bin/swiftc -O -o "$BIN" "$SRC" 2>/tmp/swiftbar-bottom-overlay.log; then
+    echo "Installed keeper into $DEST, but swiftc failed. See /tmp/swiftbar-bottom-overlay.log" >&2
+    echo "SwiftBar will retry compile on refresh." >&2
+    open "swiftbar://refreshallplugins" >/dev/null 2>&1 || true
+    exit 1
+  fi
 fi
 chmod +x "$BIN"
 
@@ -151,5 +154,5 @@ if [[ -f "$0" && "$0" != *bash && -r "$0" ]]; then
 fi
 
 echo "Installed into $DEST"
-echo "One display: bottom strip (overlaps Dock). Two displays: strip hides."
+echo "One display: bottom strip (overlaps Dock; windows stay above it when possible). Two displays: strip hides."
 echo "Closed: ⬇ in SwiftBar reopens. It will not auto-open while closed."
