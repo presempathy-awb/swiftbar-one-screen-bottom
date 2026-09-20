@@ -1,7 +1,7 @@
 import Cocoa
 import ApplicationServices
 
-let overlayRev = "v7"
+let overlayRev = "v8"
 let swiftBarDefaultsDomain = "com.ameba.SwiftBar"
 let stubFolderName = ".one-screen-bottom-stub"
 let savedPluginDirName = ".one-screen-bottom.saved-plugin-dir"
@@ -76,19 +76,20 @@ func writeStubKeeper(pluginsDir: URL) {
   let stub = stubDirectory(pluginsDir)
   try? FileManager.default.createDirectory(at: stub, withIntermediateDirectories: true)
   let quoted = shellQuoted(pluginsDir.path)
-  let body = """
-  #!/bin/bash
-  # <swiftbar.hideAbout>true</swiftbar.hideAbout>
-  # <swiftbar.hideRunInTerminal>true</swiftbar.hideRunInTerminal>
-  # <swiftbar.hideLastUpdated>true</swiftbar.hideLastUpdated>
-  # <swiftbar.hideDisablePlugin>true</swiftbar.hideDisablePlugin>
-  # <swiftbar.hideSwiftBar>true</swiftbar.hideSwiftBar>
-  REAL=\(quoted)
-  export SWIFTBAR_PLUGINS_PATH="$REAL"
-  if [[ -x "$REAL/one-screen-bottom.5s.sh" ]]; then
-    exec "$REAL/one-screen-bottom.5s.sh"
-  fi
-  """
+  let lines = [
+    "#!/bin/bash",
+    "# <swiftbar.hideAbout>true</swiftbar.hideAbout>",
+    "# <swiftbar.hideRunInTerminal>true</swiftbar.hideRunInTerminal>",
+    "# <swiftbar.hideLastUpdated>true</swiftbar.hideLastUpdated>",
+    "# <swiftbar.hideDisablePlugin>true</swiftbar.hideDisablePlugin>",
+    "# <swiftbar.hideSwiftBar>true</swiftbar.hideSwiftBar>",
+    "REAL=\(quoted)",
+    "export SWIFTBAR_PLUGINS_PATH=\"$REAL\"",
+    "if [[ -x \"$REAL/one-screen-bottom.5s.sh\" ]]; then",
+    "  exec \"$REAL/one-screen-bottom.5s.sh\"",
+    "fi",
+  ]
+  let body = lines.joined(separator: "\n") + "\n"
   let keeper = stub.appendingPathComponent("one-screen-bottom.5s.sh")
   try? body.write(to: keeper, atomically: true, encoding: .utf8)
   try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: keeper.path)
@@ -668,7 +669,7 @@ func pluginsDirectory() -> URL {
     }
     i += 1
   }
-  if let dir {
+  if let dir = dir {
     let url = URL(fileURLWithPath: dir)
     if pathLooksLikeStub(url.path) {
       return url.deletingLastPathComponent()
