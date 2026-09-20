@@ -24,7 +24,14 @@ open_bar() {
   bar_mark_open "$DIR"
   mkdir -p "$DIR/bin"
   if [[ -f "$SRC" ]] && [[ ! -x "$BIN" || "$SRC" -nt "$BIN" ]]; then
-    /usr/bin/swiftc -O -o "$BIN" "$SRC" 2>/tmp/swiftbar-bottom-overlay.log || exit 0
+    sdk="$(xcrun --show-sdk-path 2>/dev/null || true)"
+    if [[ -n "$sdk" ]]; then
+      xcrun swiftc -sdk "$sdk" -framework Cocoa -framework ApplicationServices -O -o "$BIN" "$SRC" \
+        2>/tmp/swiftbar-bottom-overlay.log || exit 0
+    else
+      /usr/bin/swiftc -framework Cocoa -framework ApplicationServices -O -o "$BIN" "$SRC" \
+        2>/tmp/swiftbar-bottom-overlay.log || exit 0
+    fi
     chmod +x "$BIN"
   fi
   if [[ -x "$BIN" ]] && ! bar_is_up; then
@@ -32,7 +39,6 @@ open_bar() {
       >/tmp/swiftbar-bottom-overlay.out 2>&1 &
     disown || true
   fi
-  open "swiftbar://refreshallplugins" >/dev/null 2>&1 || true
 }
 
 if [[ "${1:-}" == "--open" ]]; then

@@ -34,7 +34,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 
   assert_contains "$out" "cd /Users/andrew/.config/swiftbar/plugins" "cd plugins"
   assert_contains "$out" "curl -fsSL" "curl installer"
-  assert_contains "$out" "macos-install.sh?v7" "cache-bust v7"
+  assert_contains "$out" "macos-install.sh?v8" "cache-bust v8"
   assert_contains "$out" "chmod +x apply.sh" "chmod"
   assert_contains "$out" "./apply.sh --apply" "apply"
   assert_not_contains "$out" "1. cd" "no numbered steps"
@@ -47,7 +47,7 @@ fi
 help_out="$("$root/apply.sh" --help)"
 assert_contains "$help_out" "cd /Users/andrew/.config/swiftbar/plugins" "help cd plugins"
 assert_contains "$help_out" "./apply.sh --apply" "help apply"
-assert_contains "$help_out" "macos-install.sh?v7" "help v7"
+assert_contains "$help_out" "macos-install.sh?v8" "help v8"
 assert_not_contains "$help_out" "1. cd" "help unnumbered"
 
 installer="$(cat "$root/macos-install.sh")"
@@ -57,11 +57,14 @@ assert_contains "$installer" "lib/swiftbar-park.sh" "installs park helper"
 assert_contains "$installer" "bin/bottom-overlay.swift" "installs overlay"
 assert_contains "$installer" "have_local_sources" "ignores stale parent copies"
 assert_contains "$installer" "tests/apply.test.sh" "installed plugins dir is not a checkout"
-assert_contains "$installer" 'INSTALL_REV="v7"' "cache-bust GitHub curls"
+assert_contains "$installer" 'INSTALL_REV="v8"' "cache-bust GitHub curls"
 assert_contains "$installer" "extract_payload" "embedded payloads"
 assert_contains "$installer" "BEGIN_EMBEDDED_PAYLOADS" "payload markers"
+assert_contains "$installer" "SHA256" "payload checksums"
+assert_contains "$installer" "compile_overlay" "compile via xcrun"
 assert_contains "$installer" "swiftbar_park" "parks extras off the top bar"
 assert_contains "$installer" "Do not use SwiftBar refresh" "refresh is the wrong fix"
+assert_contains "$installer" "cat /tmp/swiftbar-bottom-overlay.log" "print compiler log on failure"
 assert_not_contains "$installer" "open \"swiftbar://refreshallplugins\"" "install must not relaunch top extras"
 
 overlay="$(cat "$root/bin/bottom-overlay.swift")"
@@ -77,7 +80,8 @@ assert_contains "$overlay" "StealthMode" "hide SwiftBar’s own extra"
 assert_contains "$overlay" "one-screen-bottom-stub" "stub plugin directory"
 assert_contains "$overlay" "hasStackedLowerDisplay" "only stacked displays hide the strip"
 assert_contains "$overlay" "placement(screens:" "geometry, not raw screen count"
-assert_contains "$overlay" 'overlayRev = "v7"' "log the build that actually parked extras"
+assert_contains "$overlay" 'overlayRev = "v8"' "log the build that actually parked extras"
+assert_contains "$overlay" "if let dir = dir" "old Swift optional binding"
 assert_not_contains "$overlay" "orderFrontRegardless" "raising every second pins it on top"
 assert_not_contains "$overlay" "bottomBarRect(screenFrame: screen.visibleFrame)" "strip origin is not visibleFrame"
 assert_not_contains "$overlay" "fullScreenAuxiliary" "fullscreen windows can cover it"
@@ -88,7 +92,7 @@ assert_not_contains "$overlay" "NSPanel" "NSPanel constrains to the top"
 assert_not_contains "$overlay" "desktopIconWindow" "desktop level hides the strip behind the Dock"
 
 python3 "$root/scripts/pack-macos-install.py" >/dev/null
-packed="$(awk '$0 == "# FILE bin/bottom-overlay.swift" {p=1; next} $0 == "# END_FILE" {p=0} p && $0 !~ /^# MODE /' "$root/macos-install.sh")"
+packed="$(awk '$0 == "# FILE bin/bottom-overlay.swift" {p=1; next} $0 == "# END_FILE" {p=0} p && $0 !~ /^#/' "$root/macos-install.sh")"
 if [[ -z "$packed" ]]; then
   printf 'FAIL packed overlay payload missing\n'
   fail=1

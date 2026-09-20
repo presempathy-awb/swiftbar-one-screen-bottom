@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +26,7 @@ def payload_block() -> str:
         b64 = base64.b64encode(data).decode("ascii")
         lines.append(f"# FILE {rel}")
         lines.append(f"# MODE {mode}")
+        lines.append(f"# SHA256 {hashlib.sha256(data).hexdigest()}")
         for i in range(0, len(b64), 76):
             lines.append(b64[i : i + 76])
         lines.append("# END_FILE")

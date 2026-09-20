@@ -40,7 +40,13 @@ fi
 mkdir -p "$DIR/bin"
 
 if [[ ! -x "$BIN" || "$SRC" -nt "$BIN" ]]; then
-  if ! /usr/bin/swiftc -O -o "$BIN" "$SRC" 2>/tmp/swiftbar-bottom-overlay.log; then
+  sdk="$(xcrun --show-sdk-path 2>/dev/null || true)"
+  if [[ -n "$sdk" ]]; then
+    compile=(xcrun swiftc -sdk "$sdk" -framework Cocoa -framework ApplicationServices -O -o "$BIN" "$SRC")
+  else
+    compile=(/usr/bin/swiftc -framework Cocoa -framework ApplicationServices -O -o "$BIN" "$SRC")
+  fi
+  if ! "${compile[@]}" 2>/tmp/swiftbar-bottom-overlay.log; then
     echo "bottom ⚠️"
     echo "---"
     echo "swiftc failed | bash=/usr/bin/open param1=/tmp/swiftbar-bottom-overlay.log"
