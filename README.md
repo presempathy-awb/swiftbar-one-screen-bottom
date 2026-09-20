@@ -1,25 +1,23 @@
 # SwiftBar — bottom on one screen
 
-On the Mac:
-
-```
-1. cd /Users/andrew/.config/swiftbar
-2. curl -fsSL https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main/macos-install.sh -o apply.sh
-3. chmod +x apply.sh
-4. ./apply.sh --apply
-```
-
-One display: strip sits on the bottom edge. × closes it and keeps it closed (including under memory pressure). ⬇ in SwiftBar shows only while it is down; click to reopen.
+One display: strip sits on the bottom edge of the usable screen (above the Dock). × closes it and keeps it closed (including under memory pressure). ⬇ in SwiftBar shows only while it is down; click to reopen.
 
 Two displays: strip hides. Your lower-display menu bar stays.
+
+```
+cd /Users/andrew/.config/swiftbar/plugins
+curl -fsSL https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main/macos-install.sh -o apply.sh
+chmod +x apply.sh
+./apply.sh --apply
+```
 
 Gitea `awb/swiftbar-one-screen-bottom` both ways with GitHub. SSH Host `hidin` only. No tokens.
 
 ```
-1. git clone https://github.com/presempathy-awb/swiftbar-one-screen-bottom.git
-2. cd swiftbar-one-screen-bottom
-3. git remote add hidin git@hidin:awb/swiftbar-one-screen-bottom.git
-4. bash scripts/gitea-bidir.sh
+git clone https://github.com/presempathy-awb/swiftbar-one-screen-bottom.git
+cd swiftbar-one-screen-bottom
+git remote add hidin git@hidin:awb/swiftbar-one-screen-bottom.git
+bash scripts/gitea-bidir.sh
 ```
 
-Re-run 4 after commits on either side.
+Re-run `bash scripts/gitea-bidir.sh` after commits on either side.

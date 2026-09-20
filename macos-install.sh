@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 # Install the one-screen bottom strip into SwiftBar's plugin folder.
 # Darwin: writes plugins and starts the overlay.
-# Linux: refuses. This workspace cannot see /Users/andrew/.config/swiftbar.
+# Linux: refuses. This workspace cannot see the Mac plugin folder.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 MARKER="swiftbar-one-screen-bottom"
-DEFAULT_MAC_PLUGINS="/Users/andrew/.config/swiftbar"
+DEFAULT_MAC_PLUGINS="/Users/andrew/.config/swiftbar/plugins"
 BASE="https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main"
 MAC_CURL="${BASE}/macos-install.sh"
 
 mac_commands() {
   cat <<EOF
-1. cd ${DEFAULT_MAC_PLUGINS}
-2. curl -fsSL ${MAC_CURL} -o apply.sh
-3. chmod +x apply.sh
-4. ./apply.sh --apply
+cd ${DEFAULT_MAC_PLUGINS}
+curl -fsSL ${MAC_CURL} -o apply.sh
+chmod +x apply.sh
+./apply.sh --apply
 EOF
 }
 
@@ -76,22 +76,33 @@ resolve_dest() {
     dest="${SWIFTBAR_PLUGINS_PATH:-}"
   fi
   if [[ -z "$dest" ]]; then
-    if [[ -d "$HOME/.config/swiftbar" ]]; then
-      dest="$HOME/.config/swiftbar"
+    if [[ -d "$HOME/.config/swiftbar/plugins" ]]; then
+      dest="$HOME/.config/swiftbar/plugins"
     elif [[ -d "$DEFAULT_MAC_PLUGINS" ]]; then
       dest="$DEFAULT_MAC_PLUGINS"
-    else
+    elif [[ -d "$HOME/.config/swiftbar" ]]; then
       dest="$HOME/.config/swiftbar"
+    else
+      dest="$HOME/.config/swiftbar/plugins"
     fi
   fi
   printf '%s\n' "$dest"
+}
+
+have_local_sources() {
+  [[ -f "$ROOT/one-screen-bottom.5s.sh" \
+     && -f "$ROOT/one-screen-bottom-launch.5s.sh" \
+     && -f "$ROOT/lib/bar-state.sh" \
+     && -f "$ROOT/bin/bottom-overlay.swift" ]] \
+    && grep -Fq 'constrainFrameRect' "$ROOT/bin/bottom-overlay.swift" \
+    && ! grep -Fq 'level = .statusBar' "$ROOT/bin/bottom-overlay.swift"
 }
 
 install_file() {
   local rel="$1" dest="$2" mode="$3"
   local src="$ROOT/$rel"
   mkdir -p "$(dirname "$dest")"
-  if [[ -f "$src" ]]; then
+  if have_local_sources && [[ -f "$src" ]]; then
     install -m "$mode" "$src" "$dest"
     return
   fi
@@ -121,10 +132,9 @@ if ! /usr/bin/swiftc -O -o "$BIN" "$SRC" 2>/tmp/swiftbar-bottom-overlay.log; the
 fi
 chmod +x "$BIN"
 
-if pgrep -fq "$MARKER" >/dev/null 2>&1; then
-  pkill -f "$MARKER" >/dev/null 2>&1 || true
-  sleep 0.3
-fi
+pkill -f "$MARKER" >/dev/null 2>&1 || true
+pkill -f '/bin/bottom-overlay' >/dev/null 2>&1 || true
+sleep 0.4
 
 nohup "$BIN" --plugins-dir "$DEST" --marker "$MARKER" \
   >/tmp/swiftbar-bottom-overlay.out 2>&1 &
