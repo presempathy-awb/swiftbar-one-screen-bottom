@@ -8,7 +8,8 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 MARKER="swiftbar-one-screen-bottom"
 DEFAULT_MAC_PLUGINS="/Users/andrew/.config/swiftbar/plugins"
 BASE="https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main"
-MAC_CURL="${BASE}/macos-install.sh"
+INSTALL_REV="v5"
+MAC_CURL="${BASE}/macos-install.sh?${INSTALL_REV}"
 
 mac_commands() {
   cat <<EOF
@@ -90,13 +91,17 @@ resolve_dest() {
 }
 
 have_local_sources() {
-  [[ -f "$ROOT/one-screen-bottom.5s.sh" \
+  # Installed plugin folders have overlay sources too. Only a repo checkout
+  # (with tests) may copy local files; otherwise always curl GitHub.
+  [[ -f "$ROOT/tests/apply.test.sh" \
+     && -f "$ROOT/one-screen-bottom.5s.sh" \
      && -f "$ROOT/one-screen-bottom-launch.5s.sh" \
      && -f "$ROOT/lib/bar-state.sh" \
      && -f "$ROOT/bin/bottom-overlay.swift" ]] \
-    && grep -Fq 'constrainFrameRect' "$ROOT/bin/bottom-overlay.swift" \
-    && grep -Fq 'workAreaMinY' "$ROOT/bin/bottom-overlay.swift" \
-    && ! grep -Fq 'level = .statusBar' "$ROOT/bin/bottom-overlay.swift"
+    && grep -Fq 'pinToBottom' "$ROOT/bin/bottom-overlay.swift" \
+    && grep -Fq 'desktopIconWindow' "$ROOT/bin/bottom-overlay.swift" \
+    && ! grep -Fq 'level = .statusBar' "$ROOT/bin/bottom-overlay.swift" \
+    && ! grep -Fq 'dockWindow' "$ROOT/bin/bottom-overlay.swift"
 }
 
 install_file() {
@@ -107,7 +112,7 @@ install_file() {
     install -m "$mode" "$src" "$dest"
     return
   fi
-  curl -fsSL "$BASE/$rel" -o "$dest"
+  curl -fsSL "${BASE}/${rel}?${INSTALL_REV}" -o "$dest"
   chmod "$mode" "$dest"
 }
 
@@ -125,13 +130,12 @@ bar_mark_open "$DEST"
 
 BIN="$DEST/bin/bottom-overlay"
 SRC="$DEST/bin/bottom-overlay.swift"
-if [[ ! -x "$BIN" || "$SRC" -nt "$BIN" ]]; then
-  if ! /usr/bin/swiftc -O -o "$BIN" "$SRC" 2>/tmp/swiftbar-bottom-overlay.log; then
-    echo "Installed keeper into $DEST, but swiftc failed. See /tmp/swiftbar-bottom-overlay.log" >&2
-    echo "SwiftBar will retry compile on refresh." >&2
-    open "swiftbar://refreshallplugins" >/dev/null 2>&1 || true
-    exit 1
-  fi
+rm -f "$BIN"
+if ! /usr/bin/swiftc -O -o "$BIN" "$SRC" 2>/tmp/swiftbar-bottom-overlay.log; then
+  echo "Installed keeper into $DEST, but swiftc failed. See /tmp/swiftbar-bottom-overlay.log" >&2
+  echo "SwiftBar will retry compile on refresh." >&2
+  open "swiftbar://refreshallplugins" >/dev/null 2>&1 || true
+  exit 1
 fi
 chmod +x "$BIN"
 
@@ -154,5 +158,5 @@ if [[ -f "$0" && "$0" != *bash && -r "$0" ]]; then
 fi
 
 echo "Installed into $DEST"
-echo "One display: bottom strip (overlaps Dock; windows stay above it when possible). Two displays: strip hides."
+echo "One display: strip at the physical bottom (under app windows). Two displays: strip hides."
 echo "Closed: ⬇ in SwiftBar reopens. It will not auto-open while closed."

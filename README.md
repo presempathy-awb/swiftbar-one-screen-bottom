@@ -1,12 +1,12 @@
 # SwiftBar — bottom on one screen
 
-One display: strip sits on the physical bottom of the screen and may overlap the Dock. App windows stay above that strip when possible (fullscreen can cover it). × closes it and keeps it closed. ⬇ in SwiftBar shows only while it is down.
+One display: strip sits on the physical bottom of the screen (Dock may overlap it). App windows stay above it. Fullscreen can cover it. SwiftBar’s own menu extras still live in the system menu bar; this overlay is the bottom strip. × closes it and keeps it closed. ⬇ in SwiftBar shows only while it is down.
 
 Two displays: strip hides. Your lower-display menu bar stays.
 
 ```
 cd /Users/andrew/.config/swiftbar/plugins
-curl -fsSL https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main/macos-install.sh -o apply.sh
+curl -fsSL "https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main/macos-install.sh?v5" -o apply.sh
 chmod +x apply.sh
 ./apply.sh --apply
 ```
