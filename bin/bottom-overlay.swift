@@ -14,6 +14,26 @@ func bottomBarRect(screenFrame: NSRect, height: CGFloat = 28) -> NSRect {
   NSRect(x: screenFrame.minX, y: screenFrame.minY, width: screenFrame.width, height: height)
 }
 
+func barWindowLevel() -> NSWindow.Level {
+  NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopIconWindow)) + 1)
+}
+
+func frameIsOnTopHalf(_ frame: NSRect, screen: NSRect) -> Bool {
+  frame.midY > screen.midY
+}
+
+func pinToBottom(_ window: NSWindow, screen: NSScreen) {
+  let height = window.frame.height > 1 ? window.frame.height : 28
+  let rect = bottomBarRect(screenFrame: screen.frame, height: height)
+  window.level = barWindowLevel()
+  window.setFrame(rect, display: true)
+  window.setFrameOrigin(rect.origin)
+  if frameIsOnTopHalf(window.frame, screen: screen.frame) || abs(window.frame.minY - rect.minY) > 1 {
+    window.setFrame(rect, display: true)
+    window.setFrameOrigin(NSPoint(x: rect.minX, y: rect.minY))
+  }
+}
+
 func workAreaMinY(screenFrame: NSRect, visibleFrame: NSRect, barHeight: CGFloat = 28) -> CGFloat {
   max(visibleFrame.minY, screenFrame.minY + barHeight)
 }
@@ -232,7 +252,7 @@ final class BottomBarController: NSObject {
       backing: .buffered,
       defer: false
     )
-    panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)))
+    panel.level = barWindowLevel()
     panel.isOpaque = false
     panel.backgroundColor = .clear
     panel.hasShadow = false
@@ -288,12 +308,11 @@ final class BottomBarController: NSObject {
         panel.orderOut(nil)
         return
       }
-      let rect = bottomBarRect(screenFrame: screen.frame)
-      panel.setFrame(rect, display: true)
-      if abs(panel.frame.minY - rect.minY) > 1 {
-        panel.setFrameOrigin(NSPoint(x: rect.minX, y: rect.minY))
+      pinToBottom(panel, screen: screen)
+      if !panel.isVisible {
+        panel.orderFront(nil)
       }
-      panel.orderFrontRegardless()
+      let rect = bottomBarRect(screenFrame: screen.frame)
       if barProtrudesIntoWorkArea(screenFrame: screen.frame, visibleFrame: screen.visibleFrame) {
         promptAXOnce(pluginsDir: pluginsDir)
       }
