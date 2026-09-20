@@ -9,8 +9,8 @@ func placement(forScreenCount count: Int) -> BarPlacement {
   count <= 1 ? .bottom : .hidden
 }
 
-func bottomBarRect(visibleFrame: NSRect, height: CGFloat = 28) -> NSRect {
-  NSRect(x: visibleFrame.minX, y: visibleFrame.minY, width: visibleFrame.width, height: height)
+func bottomBarRect(screenFrame: NSRect, height: CGFloat = 28) -> NSRect {
+  NSRect(x: screenFrame.minX, y: screenFrame.minY, width: screenFrame.width, height: height)
 }
 
 func closedFlagURL(pluginsDir: URL) -> URL {
@@ -72,14 +72,14 @@ final class BottomBarController: NSObject {
       backing: .buffered,
       defer: false
     )
-    panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
+    panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)))
     panel.isOpaque = false
     panel.backgroundColor = .clear
     panel.hasShadow = false
     panel.hidesOnDeactivate = false
     panel.isMovable = false
     panel.animationBehavior = .none
-    panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+    panel.collectionBehavior = [.canJoinAllSpaces, .ignoresCycle]
     panel.titleVisibility = .hidden
     panel.titlebarAppearsTransparent = true
 
@@ -128,7 +128,7 @@ final class BottomBarController: NSObject {
         panel.orderOut(nil)
         return
       }
-      let rect = bottomBarRect(visibleFrame: screen.visibleFrame)
+      let rect = bottomBarRect(screenFrame: screen.frame)
       panel.setFrame(rect, display: true)
       if abs(panel.frame.minY - rect.minY) > 1 {
         panel.setFrameOrigin(NSPoint(x: rect.minX, y: rect.minY))
