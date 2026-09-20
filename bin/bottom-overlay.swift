@@ -340,7 +340,7 @@ final class BottomBarController: NSObject {
     return button
   }
 
-  private func closeBar(_ sender: NSButton) {
+  @objc private func closeBar(_: NSButton) {
     FileManager.default.createFile(
       atPath: closedFlagURL(pluginsDir: pluginsDir).path,
       contents: Data(),
@@ -352,7 +352,7 @@ final class BottomBarController: NSObject {
     NSApp.terminate(nil)
   }
 
-  private func pluginClicked(_ sender: NSButton) {
+  @objc private func pluginClicked(_ sender: NSButton) {
     guard snapshots.indices.contains(sender.tag) else { return }
     let plugin = snapshots[sender.tag]
     let menu = NSMenu()
@@ -442,7 +442,7 @@ final class BottomBarController: NSObject {
 
 func pluginDisplayName(_ filename: String) -> String {
   var base = (filename as NSString).deletingPathExtension
-  if let range = base.range(of: #"\.\d+[smhd]$#", options: .regularExpression) {
+  if let range = base.range(of: "[.][0-9]+[smhd]$", options: .regularExpression) {
     base.removeSubrange(range)
   }
   return base
