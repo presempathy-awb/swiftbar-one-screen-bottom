@@ -1,7 +1,7 @@
 import Cocoa
 import ApplicationServices
 
-let overlayRev = "v9"
+let overlayRev = "v10"
 let swiftBarDefaultsDomain = "com.ameba.SwiftBar"
 let stubFolderName = ".one-screen-bottom-stub"
 let savedPluginDirName = ".one-screen-bottom.saved-plugin-dir"
@@ -25,8 +25,12 @@ func hasStackedLowerDisplay(_ screens: [NSScreen]) -> Bool {
   return false
 }
 
+func lowestScreen(_ screens: [NSScreen]) -> NSScreen? {
+  screens.min(by: { $0.frame.minY < $1.frame.minY }) ?? screens.first
+}
+
 func placement(screens: [NSScreen]) -> BarPlacement {
-  hasStackedLowerDisplay(screens) ? .hidden : .bottom
+  screens.isEmpty ? .hidden : .bottom
 }
 
 func swiftBarBundleID() -> String { "com.ameba.SwiftBar" }
@@ -146,31 +150,28 @@ func restoreTopSwiftBar(pluginsDir: URL) {
   showTopSwiftBar()
 }
 
-func hideDockForBar() {
+func hideSystemBarsForStrip() {
+  NSMenu.setMenuBarVisible(false)
   var opts = NSApp.presentationOptions
-  if !opts.contains(.autoHideDock) {
-    opts.insert(.autoHideDock)
-    NSApp.presentationOptions = opts
-  }
+  opts.insert(.autoHideDock)
+  opts.insert(.autoHideMenuBar)
+  NSApp.presentationOptions = opts
 }
 
-func restoreDock() {
+func restoreSystemBars() {
+  NSMenu.setMenuBarVisible(true)
   var opts = NSApp.presentationOptions
-  if opts.contains(.autoHideDock) {
-    opts.remove(.autoHideDock)
-    NSApp.presentationOptions = opts
-  }
+  opts.remove(.autoHideDock)
+  opts.remove(.autoHideMenuBar)
+  NSApp.presentationOptions = opts
 }
 
 func bottomBarRect(screenFrame: NSRect, height: CGFloat = 28) -> NSRect {
   NSRect(x: screenFrame.minX, y: screenFrame.minY, width: screenFrame.width, height: height)
 }
 
-func barWindowLevel(screen: NSScreen) -> NSWindow.Level {
-  if screen.visibleFrame.minY > screen.frame.minY + 8 {
-    return NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)))
-  }
-  return .normal
+func barWindowLevel() -> NSWindow.Level {
+  NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)))
 }
 
 func frameIsOnTopHalf(_ frame: NSRect, screen: NSRect) -> Bool {
@@ -178,17 +179,13 @@ func frameIsOnTopHalf(_ frame: NSRect, screen: NSRect) -> Bool {
 }
 
 func pinToBottom(_ window: NSWindow, screen: NSScreen) {
-  let height = window.frame.height > 1 ? window.frame.height : 28
-  let rect = bottomBarRect(screenFrame: screen.frame, height: height)
-  window.level = barWindowLevel(screen: screen)
+  let rect = bottomBarRect(screenFrame: screen.frame, height: 28)
+  window.level = barWindowLevel()
   window.setFrame(rect, display: true)
-  window.setFrameOrigin(rect.origin)
+  window.setFrameOrigin(NSPoint(x: rect.minX, y: rect.minY))
   if frameIsOnTopHalf(window.frame, screen: screen.frame) || abs(window.frame.minY - rect.minY) > 1 {
     window.setFrame(rect, display: true)
     window.setFrameOrigin(NSPoint(x: rect.minX, y: rect.minY))
-  }
-  if window.level == .normal {
-    window.orderBack(nil)
   }
 }
 
@@ -363,7 +360,8 @@ func closedFlagURL(pluginsDir: URL) -> URL {
 
 final class BottomWindow: NSWindow {
   override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
-    frameRect
+    guard let lowest = lowestScreen(NSScreen.screens) else { return frameRect }
+    return bottomBarRect(screenFrame: lowest.frame, height: max(frameRect.height, 28))
   }
 
   override var canBecomeKey: Bool { false }
@@ -411,13 +409,17 @@ final class BottomBarController: NSObject {
   }
 
   private func buildPanel() {
+    let screen = lowestScreen(NSScreen.screens)
+    let rect = bottomBarRect(
+      screenFrame: screen?.frame ?? NSRect(x: 0, y: 0, width: 800, height: 28)
+    )
     let panel = BottomWindow(
-      contentRect: NSRect(x: 0, y: 0, width: 800, height: 28),
+      contentRect: rect,
       styleMask: .borderless,
       backing: .buffered,
       defer: false
     )
-    panel.level = .normal
+    panel.level = barWindowLevel()
     panel.isOpaque = false
     panel.backgroundColor = .clear
     panel.hasShadow = false
@@ -463,7 +465,7 @@ final class BottomBarController: NSObject {
   private func applyPlacement() {
     if FileManager.default.fileExists(atPath: closedFlagURL(pluginsDir: pluginsDir).path) {
       panel.orderOut(nil)
-      restoreDock()
+      restoreSystemBars()
       restoreTopSwiftBar(pluginsDir: pluginsDir)
       NSApp.terminate(nil)
       return
@@ -471,23 +473,22 @@ final class BottomBarController: NSObject {
     switch placement(screens: NSScreen.screens) {
     case .hidden:
       panel.orderOut(nil)
-      restoreDock()
+      restoreSystemBars()
       restoreTopSwiftBar(pluginsDir: pluginsDir)
     case .bottom:
-      guard let screen = NSScreen.screens.min(by: { $0.frame.minY < $1.frame.minY }) ?? NSScreen.screens.first else {
+      guard let screen = lowestScreen(NSScreen.screens) else {
         panel.orderOut(nil)
         return
       }
-      hideDockForBar()
+      hideSystemBarsForStrip()
       hideTopSwiftBar(pluginsDir: pluginsDir)
       pinToBottom(panel, screen: screen)
-      if !panel.isVisible {
-        panel.orderFront(nil)
-        pinToBottom(panel, screen: screen)
-      }
+      panel.orderFront(nil)
+      pinToBottom(panel, screen: screen)
       let line =
         "overlay rev=\(overlayRev) pin screens=\(NSScreen.screens.count) y=\(Int(panel.frame.minY)) "
-        + "level=\(panel.level.rawValue) stacked=\(hasStackedLowerDisplay(NSScreen.screens))\n"
+        + "screenMinY=\(Int(screen.frame.minY)) topHalf=\(frameIsOnTopHalf(panel.frame, screen: screen.frame)) "
+        + "stacked=\(hasStackedLowerDisplay(NSScreen.screens))\n"
       if line != lastPinLog {
         lastPinLog = line
         FileHandle.standardError.write(Data(line.utf8))
@@ -545,7 +546,7 @@ final class BottomBarController: NSObject {
       contents: Data(),
       attributes: nil
     )
-    restoreDock()
+    restoreSystemBars()
     restoreTopSwiftBar(pluginsDir: pluginsDir)
     NSApp.terminate(nil)
   }
@@ -716,7 +717,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationWillTerminate(_ notification: Notification) {
-    restoreDock()
+    restoreSystemBars()
     restoreTopSwiftBar(pluginsDir: pluginsDirectory())
   }
 }
