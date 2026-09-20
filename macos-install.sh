@@ -9,7 +9,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 MARKER="swiftbar-one-screen-bottom"
 DEFAULT_MAC_PLUGINS="/Users/andrew/.config/swiftbar/plugins"
 BASE="https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main"
-INSTALL_REV="v9"
+INSTALL_REV="v10"
 MAC_CURL="${BASE}/macos-install.sh?${INSTALL_REV}"
 SELF="${BASH_SOURCE[0]:-$0}"
 
