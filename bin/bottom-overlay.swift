@@ -1,7 +1,7 @@
 import Cocoa
 import ApplicationServices
 
-let overlayRev = "v10"
+let overlayRev = "v11"
 let swiftBarDefaultsDomain = "com.ameba.SwiftBar"
 let stubFolderName = ".one-screen-bottom-stub"
 let savedPluginDirName = ".one-screen-bottom.saved-plugin-dir"
@@ -27,6 +27,18 @@ func hasStackedLowerDisplay(_ screens: [NSScreen]) -> Bool {
 
 func lowestScreen(_ screens: [NSScreen]) -> NSScreen? {
   screens.min(by: { $0.frame.minY < $1.frame.minY }) ?? screens.first
+}
+
+func screenDisplayID(_ screen: NSScreen) -> CGDirectDisplayID {
+  let key = NSDeviceDescriptionKey("NSScreenNumber")
+  if let num = screen.deviceDescription[key] as? NSNumber {
+    return num.uint32Value
+  }
+  return 0
+}
+
+func screenMatching(id: CGDirectDisplayID) -> NSScreen? {
+  NSScreen.screens.first { screenDisplayID($0) == id }
 }
 
 func placement(screens: [NSScreen]) -> BarPlacement {
@@ -128,9 +140,6 @@ func unparkTopSwiftBar(pluginsDir: URL) {
 }
 
 func hideTopSwiftBar(pluginsDir: URL) {
-  if pathLooksLikeStub(readSwiftBarDefault("PluginDirectory")) {
-    return
-  }
   parkTopSwiftBar(pluginsDir: pluginsDir)
   for app in NSWorkspace.shared.runningApplications where app.bundleIdentifier == swiftBarBundleID() {
     app.forceTerminate()
@@ -151,10 +160,9 @@ func restoreTopSwiftBar(pluginsDir: URL) {
 }
 
 func hideSystemBarsForStrip() {
-  NSMenu.setMenuBarVisible(false)
+  NSMenu.setMenuBarVisible(true)
   var opts = NSApp.presentationOptions
   opts.insert(.autoHideDock)
-  opts.insert(.autoHideMenuBar)
   NSApp.presentationOptions = opts
 }
 
@@ -162,7 +170,6 @@ func restoreSystemBars() {
   NSMenu.setMenuBarVisible(true)
   var opts = NSApp.presentationOptions
   opts.remove(.autoHideDock)
-  opts.remove(.autoHideMenuBar)
   NSApp.presentationOptions = opts
 }
 
@@ -171,7 +178,7 @@ func bottomBarRect(screenFrame: NSRect, height: CGFloat = 28) -> NSRect {
 }
 
 func barWindowLevel() -> NSWindow.Level {
-  NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)))
+  .floating
 }
 
 func frameIsOnTopHalf(_ frame: NSRect, screen: NSRect) -> Bool {
@@ -359,13 +366,77 @@ func closedFlagURL(pluginsDir: URL) -> URL {
 }
 
 final class BottomWindow: NSWindow {
+  var displayID: CGDirectDisplayID = 0
+
+  convenience init(display: NSScreen) {
+    let rect = bottomBarRect(screenFrame: display.frame)
+    self.init(contentRect: rect, styleMask: .borderless, backing: .buffered, defer: false, screen: display)
+    displayID = screenDisplayID(display)
+  }
+
   override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
-    guard let lowest = lowestScreen(NSScreen.screens) else { return frameRect }
-    return bottomBarRect(screenFrame: lowest.frame, height: max(frameRect.height, 28))
+    let match = screenMatching(id: displayID) ?? screen ?? self.screen
+    guard let match else { return frameRect }
+    return bottomBarRect(screenFrame: match.frame, height: 28)
   }
 
   override var canBecomeKey: Bool { false }
   override var canBecomeMain: Bool { false }
+}
+
+final class ScreenStrip {
+  let displayID: CGDirectDisplayID
+  let window: BottomWindow
+  let stack: NSStackView
+  let clockLabel: NSTextField
+
+  init(display: NSScreen) {
+    displayID = screenDisplayID(display)
+    let window = BottomWindow(display: display)
+    window.level = barWindowLevel()
+    window.isOpaque = true
+    window.backgroundColor = NSColor.windowBackgroundColor
+    window.hasShadow = false
+    window.hidesOnDeactivate = false
+    window.isMovable = false
+    window.isRestorable = false
+    window.animationBehavior = .none
+    window.collectionBehavior = [.canJoinAllSpaces, .ignoresCycle]
+    window.titleVisibility = .hidden
+    window.titlebarAppearsTransparent = true
+
+    let fx = NSVisualEffectView()
+    fx.material = .sidebar
+    fx.blendingMode = .behindWindow
+    fx.state = .active
+    fx.translatesAutoresizingMaskIntoConstraints = false
+
+    let stack = NSStackView()
+    stack.orientation = .horizontal
+    stack.alignment = .centerY
+    stack.spacing = 10
+    stack.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 8)
+    stack.translatesAutoresizingMaskIntoConstraints = false
+
+    let clock = NSTextField(labelWithString: "")
+    clock.font = NSFont.menuBarFont(ofSize: 13)
+    clock.textColor = .labelColor
+
+    window.contentView = fx
+    fx.addSubview(stack)
+    NSLayoutConstraint.activate([
+      stack.leadingAnchor.constraint(equalTo: fx.leadingAnchor),
+      stack.trailingAnchor.constraint(equalTo: fx.trailingAnchor),
+      stack.topAnchor.constraint(equalTo: fx.topAnchor),
+      stack.bottomAnchor.constraint(equalTo: fx.bottomAnchor),
+    ])
+
+    self.window = window
+    self.stack = stack
+    self.clockLabel = clock
+  }
+
+  var screen: NSScreen? { screenMatching(id: displayID) }
 }
 
 struct PluginSnapshot {
@@ -377,9 +448,7 @@ struct PluginSnapshot {
 
 final class BottomBarController: NSObject {
   private let pluginsDir: URL
-  private var panel: NSWindow!
-  private var stack: NSStackView!
-  private var clockLabel: NSTextField!
+  private var strips: [ScreenStrip] = []
   private var snapshots: [PluginSnapshot] = []
   private var clockTimer: Timer?
   private var pluginTimer: Timer?
@@ -389,7 +458,6 @@ final class BottomBarController: NSObject {
     self.pluginsDir = pluginsDir
     super.init()
     ProcessInfo.processInfo.processName = marker
-    buildPanel()
     refreshPlugins()
     tickClock()
     clockTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -408,63 +476,23 @@ final class BottomBarController: NSObject {
     }
   }
 
-  private func buildPanel() {
-    let screen = lowestScreen(NSScreen.screens)
-    let rect = bottomBarRect(
-      screenFrame: screen?.frame ?? NSRect(x: 0, y: 0, width: 800, height: 28)
-    )
-    let panel = BottomWindow(
-      contentRect: rect,
-      styleMask: .borderless,
-      backing: .buffered,
-      defer: false
-    )
-    panel.level = barWindowLevel()
-    panel.isOpaque = false
-    panel.backgroundColor = .clear
-    panel.hasShadow = false
-    panel.hidesOnDeactivate = false
-    panel.isMovable = false
-    panel.isRestorable = false
-    panel.animationBehavior = .none
-    panel.collectionBehavior = [.canJoinAllSpaces, .ignoresCycle]
-    panel.titleVisibility = .hidden
-    panel.titlebarAppearsTransparent = true
-
-    let fx = NSVisualEffectView()
-    fx.material = .menu
-    fx.blendingMode = .behindWindow
-    fx.state = .active
-    fx.translatesAutoresizingMaskIntoConstraints = false
-
-    let stack = NSStackView()
-    stack.orientation = .horizontal
-    stack.alignment = .centerY
-    stack.spacing = 10
-    stack.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 8)
-    stack.translatesAutoresizingMaskIntoConstraints = false
-
-    let clock = NSTextField(labelWithString: "")
-    clock.font = NSFont.menuBarFont(ofSize: 13)
-    clock.textColor = .labelColor
-
-    panel.contentView = fx
-    fx.addSubview(stack)
-    NSLayoutConstraint.activate([
-      stack.leadingAnchor.constraint(equalTo: fx.leadingAnchor),
-      stack.trailingAnchor.constraint(equalTo: fx.trailingAnchor),
-      stack.topAnchor.constraint(equalTo: fx.topAnchor),
-      stack.bottomAnchor.constraint(equalTo: fx.bottomAnchor),
-    ])
-
-    self.panel = panel
-    self.stack = stack
-    self.clockLabel = clock
+  private func syncStrips() {
+    let ids = Set(NSScreen.screens.map(screenDisplayID))
+    strips.removeAll { strip in
+      if ids.contains(strip.displayID) { return false }
+      strip.window.orderOut(nil)
+      return true
+    }
+    for screen in NSScreen.screens {
+      let id = screenDisplayID(screen)
+      if strips.contains(where: { $0.displayID == id }) { continue }
+      strips.append(ScreenStrip(display: screen))
+    }
   }
 
   private func applyPlacement() {
     if FileManager.default.fileExists(atPath: closedFlagURL(pluginsDir: pluginsDir).path) {
-      panel.orderOut(nil)
+      strips.forEach { $0.window.orderOut(nil) }
       restoreSystemBars()
       restoreTopSwiftBar(pluginsDir: pluginsDir)
       NSApp.terminate(nil)
@@ -472,32 +500,34 @@ final class BottomBarController: NSObject {
     }
     switch placement(screens: NSScreen.screens) {
     case .hidden:
-      panel.orderOut(nil)
+      strips.forEach { $0.window.orderOut(nil) }
       restoreSystemBars()
       restoreTopSwiftBar(pluginsDir: pluginsDir)
     case .bottom:
-      guard let screen = lowestScreen(NSScreen.screens) else {
-        panel.orderOut(nil)
-        return
-      }
       hideSystemBarsForStrip()
       hideTopSwiftBar(pluginsDir: pluginsDir)
-      pinToBottom(panel, screen: screen)
-      panel.orderFront(nil)
-      pinToBottom(panel, screen: screen)
-      let line =
-        "overlay rev=\(overlayRev) pin screens=\(NSScreen.screens.count) y=\(Int(panel.frame.minY)) "
-        + "screenMinY=\(Int(screen.frame.minY)) topHalf=\(frameIsOnTopHalf(panel.frame, screen: screen.frame)) "
-        + "stacked=\(hasStackedLowerDisplay(NSScreen.screens))\n"
-      if line != lastPinLog {
-        lastPinLog = line
-        FileHandle.standardError.write(Data(line.utf8))
+      syncStrips()
+      rebuildButtons()
+      var log = "overlay rev=\(overlayRev) screens=\(NSScreen.screens.count)"
+      for strip in strips {
+        guard let screen = strip.screen else { continue }
+        pinToBottom(strip.window, screen: screen)
+        strip.window.orderFront(nil)
+        pinToBottom(strip.window, screen: screen)
+        log +=
+          " id=\(strip.displayID) y=\(Int(strip.window.frame.minY)) screenMinY=\(Int(screen.frame.minY))"
+          + " topHalf=\(frameIsOnTopHalf(strip.window.frame, screen: screen.frame))"
+        let rect = bottomBarRect(screenFrame: screen.frame)
+        if barProtrudesIntoWorkArea(screenFrame: screen.frame, visibleFrame: screen.visibleFrame) {
+          promptAXOnce(pluginsDir: pluginsDir)
+        }
+        liftStandardWindows(aboveBar: rect, on: screen)
       }
-      let rect = bottomBarRect(screenFrame: screen.frame)
-      if barProtrudesIntoWorkArea(screenFrame: screen.frame, visibleFrame: screen.visibleFrame) {
-        promptAXOnce(pluginsDir: pluginsDir)
+      log += " stacked=\(hasStackedLowerDisplay(NSScreen.screens))\n"
+      if log != lastPinLog {
+        lastPinLog = log
+        FileHandle.standardError.write(Data(log.utf8))
       }
-      liftStandardWindows(aboveBar: rect, on: screen)
     }
   }
 
@@ -505,30 +535,34 @@ final class BottomBarController: NSObject {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_GB")
     formatter.dateFormat = "EEE d MMM  HH:mm"
-    clockLabel.stringValue = formatter.string(from: Date())
+    let text = formatter.string(from: Date())
+    for strip in strips {
+      strip.clockLabel.stringValue = text
+    }
   }
 
   private func refreshPlugins() {
     snapshots = loadPlugins()
-    rebuildButtons()
     applyPlacement()
   }
 
   private func rebuildButtons() {
-    stack.views.forEach { $0.removeFromSuperview() }
-    for (index, plugin) in snapshots.enumerated() {
-      let button = NSButton(title: plugin.title, target: self, action: #selector(pluginClicked(_:)))
-      button.tag = index
-      button.bezelStyle = .inline
-      button.isBordered = false
-      button.font = NSFont.menuBarFont(ofSize: 13)
-      stack.addArrangedSubview(button)
+    for strip in strips {
+      strip.stack.views.forEach { $0.removeFromSuperview() }
+      for (index, plugin) in snapshots.enumerated() {
+        let button = NSButton(title: plugin.title, target: self, action: #selector(pluginClicked(_:)))
+        button.tag = index
+        button.bezelStyle = .inline
+        button.isBordered = false
+        button.font = NSFont.menuBarFont(ofSize: 13)
+        strip.stack.addArrangedSubview(button)
+      }
+      let spacer = NSView()
+      spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+      strip.stack.addArrangedSubview(spacer)
+      strip.stack.addArrangedSubview(strip.clockLabel)
+      strip.stack.addArrangedSubview(makeCloseButton())
     }
-    let spacer = NSView()
-    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    stack.addArrangedSubview(spacer)
-    stack.addArrangedSubview(clockLabel)
-    stack.addArrangedSubview(makeCloseButton())
   }
 
   private func makeCloseButton() -> NSButton {
