@@ -9,7 +9,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 MARKER="swiftbar-one-screen-bottom"
 DEFAULT_MAC_PLUGINS="/Users/andrew/.config/swiftbar/plugins"
 BASE="https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main"
-INSTALL_REV="v11"
+INSTALL_REV="v12"
 MAC_CURL="${BASE}/macos-install.sh?${INSTALL_REV}"
 SELF="${BASH_SOURCE[0]:-$0}"
 
@@ -271,7 +271,13 @@ echo "Installed into $DEST"
 echo "Strip on the bottom edge of every display. SwiftBar is quit while it is up."
 echo "Do not use SwiftBar refresh; that puts extras back on top. Re-run apply.sh instead."
 echo "Closed: ⬇ in SwiftBar reopens. It will not auto-open while closed."
-sleep 1.2
+sleep 0.5
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if grep -q 'overlay rev=' /tmp/swiftbar-bottom-overlay.out 2>/dev/null; then
+    break
+  fi
+  sleep 0.3
+done
 echo "--- overlay ---"
 cat /tmp/swiftbar-bottom-overlay.out 2>/dev/null || true
 if pgrep -x SwiftBar >/dev/null 2>&1; then
