@@ -1,7 +1,7 @@
 import Cocoa
 import ApplicationServices
 
-let overlayRev = "v14"
+let overlayRev = "v15"
 let swiftBarDefaultsDomain = "com.ameba.SwiftBar"
 let stubFolderName = ".one-screen-bottom-stub"
 let savedPluginDirName = ".one-screen-bottom.saved-plugin-dir"
@@ -11,8 +11,8 @@ enum BarPlacement {
   case hidden
 }
 
-func placement(forScreenCount _: Int) -> BarPlacement {
-  .bottom
+func placement(forScreenCount count: Int) -> BarPlacement {
+  count <= 1 ? .bottom : .hidden
 }
 
 func hasStackedLowerDisplay(_ screens: [NSScreen]) -> Bool {
@@ -23,10 +23,6 @@ func hasStackedLowerDisplay(_ screens: [NSScreen]) -> Bool {
     }
   }
   return false
-}
-
-func lowestScreen(_ screens: [NSScreen]) -> NSScreen? {
-  screens.min(by: { $0.frame.minY < $1.frame.minY }) ?? screens.first
 }
 
 func screenDisplayID(_ screen: NSScreen) -> CGDirectDisplayID {
@@ -42,7 +38,7 @@ func screenMatching(id: CGDirectDisplayID) -> NSScreen? {
 }
 
 func placement(screens: [NSScreen]) -> BarPlacement {
-  .bottom
+  placement(forScreenCount: screens.count)
 }
 
 func overlayLog(_ message: String) {
@@ -234,6 +230,8 @@ func bottomBarRect(screenFrame: NSRect, height: CGFloat = 28) -> NSRect {
 }
 
 func barWindowLevel() -> NSWindow.Level {
+  // Above the Dock so the strip is visible on the physical bottom edge.
+  // Below menu-bar / statusBar levels so AppKit does not snap it to the top.
   NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
 }
 
@@ -323,6 +321,7 @@ func liftStandardWindows(aboveBar bar: NSRect, on screen: NSScreen) {
   let maxBottom = quartzBottomLimit(barTopAppKit: bar.maxY)
   let screenQuartz = quartzRect(fromAppKit: screen.frame)
   let selfPid = ProcessInfo.processInfo.processIdentifier
+
   for app in NSWorkspace.shared.runningApplications {
     if app.isTerminated { continue }
     if app.processIdentifier == selfPid { continue }
@@ -356,21 +355,35 @@ func liftWindowIfNeeded(
         let role = roleRef as? String,
         role == (kAXWindowRole as String)
   else { return }
+
   var subRef: CFTypeRef?
   if AXUIElementCopyAttributeValue(win, kAXSubroleAttribute as CFString, &subRef) == .success,
      let subrole = subRef as? String
   {
     let skip: Set<String> = [
-      "AXDialog", "AXSystemDialog", "AXFloatingWindow", "AXPictureInPictureWindow", "AXUnknown",
+      "AXDialog",
+      "AXSystemDialog",
+      "AXFloatingWindow",
+      "AXPictureInPictureWindow",
+      "AXUnknown",
     ]
     if skip.contains(subrole) { return }
   }
+
   var fullRef: CFTypeRef?
   if AXUIElementCopyAttributeValue(win, "AXFullScreen" as CFString, &fullRef) == .success,
-     let full = fullRef as? Bool, full { return }
+     let full = fullRef as? Bool, full
+  {
+    return
+  }
+
   var minRef: CFTypeRef?
   if AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute as CFString, &minRef) == .success,
-     let minimized = minRef as? Bool, minimized { return }
+     let minimized = minRef as? Bool, minimized
+  {
+    return
+  }
+
   var posRef: CFTypeRef?
   var sizeRef: CFTypeRef?
   guard AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posRef) == .success,
@@ -378,16 +391,22 @@ func liftWindowIfNeeded(
         let posAX = copyAXValue(posRef),
         let sizeAX = copyAXValue(sizeRef)
   else { return }
+
   var origin = CGPoint.zero
   var size = CGSize.zero
   guard AXValueGetValue(posAX, .cgPoint, &origin), AXValueGetValue(sizeAX, .cgSize, &size) else { return }
+
   let quartzWindow = CGRect(origin: origin, size: size)
   if windowIsFullscreenLike(
     NSRect(x: quartzWindow.minX, y: quartzWindow.minY, width: quartzWindow.width, height: quartzWindow.height),
     screen: NSRect(x: screenQuartz.minX, y: screenQuartz.minY, width: screenQuartz.width, height: screenQuartz.height)
-  ) { return }
+  ) {
+    return
+  }
+
   let appKitWindow = appKitRect(fromQuartz: quartzWindow)
   guard windowNeedsLift(window: appKitWindow, bar: bar, screen: screen) else { return }
+
   let newHeight = maxQuartzBottom - origin.y
   if newHeight < 80 { return }
   if abs(newHeight - size.height) < 2 { return }
@@ -402,11 +421,13 @@ func closedFlagURL(pluginsDir: URL) -> URL {
 
 final class BottomWindow: NSWindow {
   var displayID: CGDirectDisplayID = 0
+
   override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
     let match = screenMatching(id: displayID) ?? screen ?? self.screen
     guard let match else { return frameRect }
     return bottomBarRect(screenFrame: match.frame, height: 28)
   }
+
   override var canBecomeKey: Bool { false }
   override var canBecomeMain: Bool { false }
 }
@@ -416,6 +437,7 @@ final class ScreenStrip {
   let window: BottomWindow
   let stack: NSStackView
   let clockLabel: NSTextField
+
   init(display: NSScreen) {
     displayID = screenDisplayID(display)
     let rect = bottomBarRect(screenFrame: display.frame)
@@ -434,24 +456,29 @@ final class ScreenStrip {
     window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
     overlayLog("created strip id=\(displayID) y=\(Int(rect.minY)) w=\(Int(rect.width))")
+
     let root = NSView(frame: NSRect(origin: .zero, size: rect.size))
     root.autoresizingMask = [.width, .height]
     root.wantsLayer = true
     root.layer?.backgroundColor = NSColor(calibratedWhite: 0.16, alpha: 1).cgColor
+
     let hairline = NSView(frame: NSRect(x: 0, y: rect.height - 1, width: rect.width, height: 1))
     hairline.wantsLayer = true
     hairline.layer?.backgroundColor = NSColor(calibratedWhite: 0.42, alpha: 1).cgColor
     hairline.autoresizingMask = [.width, .minYMargin]
     root.addSubview(hairline)
+
     let stack = NSStackView()
     stack.orientation = .horizontal
     stack.alignment = .centerY
     stack.spacing = 10
     stack.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 8)
     stack.translatesAutoresizingMaskIntoConstraints = false
+
     let clock = NSTextField(labelWithString: "")
     clock.font = NSFont.menuBarFont(ofSize: 13)
     clock.textColor = NSColor.white
+
     window.contentView = root
     root.addSubview(stack)
     NSLayoutConstraint.activate([
@@ -460,10 +487,12 @@ final class ScreenStrip {
       stack.topAnchor.constraint(equalTo: root.topAnchor),
       stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
     ])
+
     self.window = window
     self.stack = stack
     self.clockLabel = clock
   }
+
   var screen: NSScreen? { screenMatching(id: displayID) }
 }
 
@@ -482,6 +511,7 @@ final class BottomBarController: NSObject {
   private var pluginTimer: Timer?
   private var lastPinLog = ""
   private var firstPinDone = false
+
   init(pluginsDir: URL, marker: String) {
     self.pluginsDir = pluginsDir
     super.init()
@@ -498,10 +528,16 @@ final class BottomBarController: NSObject {
     }
     NotificationCenter.default.addObserver(
       forName: NSApplication.didChangeScreenParametersNotification,
-      object: nil, queue: .main
-    ) { [weak self] _ in self?.applyPlacement() }
-    DispatchQueue.main.async { [weak self] in self?.refreshPlugins() }
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.applyPlacement()
+    }
+    DispatchQueue.main.async { [weak self] in
+      self?.refreshPlugins()
+    }
   }
+
   private func syncStrips() {
     let ids = Set(NSScreen.screens.map(screenDisplayID))
     strips.removeAll { strip in
@@ -515,6 +551,7 @@ final class BottomBarController: NSObject {
       strips.append(ScreenStrip(display: screen))
     }
   }
+
   private func applyPlacement() {
     if FileManager.default.fileExists(atPath: closedFlagURL(pluginsDir: pluginsDir).path) {
       strips.forEach { $0.window.orderOut(nil) }
@@ -531,57 +568,70 @@ final class BottomBarController: NSObject {
     }
     switch placement(screens: screens) {
     case .hidden:
-      overlayLog("hidden-skipped, keeping bottom")
+      strips.forEach { $0.window.orderOut(nil) }
+      restoreSystemBars()
+      restoreCompanionStatusApps(pluginsDir: pluginsDir)
+      restoreTopSwiftBar(pluginsDir: pluginsDir)
+      let log = "two-screens, leaving extras on the display menu bar screens=\(screens.count)"
+      if log != lastPinLog {
+        lastPinLog = log
+        overlayLog(log)
+      }
+      return
     case .bottom:
-      break
-    }
-    hideSystemBarsForStrip()
-    hideTopSwiftBar(pluginsDir: pluginsDir)
-    hideCompanionStatusApps(pluginsDir: pluginsDir)
-    syncStrips()
-    rebuildButtons()
-    var log = "screens=\(screens.count)"
-    for strip in strips {
-      guard let screen = strip.screen else {
-        overlayLog("strip id=\(strip.displayID) missing screen")
-        continue
-      }
-      pinToBottom(strip.window, screen: screen)
-      strip.window.orderFront(nil)
-      pinToBottom(strip.window, screen: screen)
-      log +=
-        " id=\(strip.displayID) y=\(Int(strip.window.frame.minY)) screenMinY=\(Int(screen.frame.minY))"
-        + " topHalf=\(frameIsOnTopHalf(strip.window.frame, screen: screen.frame))"
-        + " level=\(strip.window.level.rawValue)"
-    }
-    log += " stacked=\(hasStackedLowerDisplay(screens)) topOwners=\(statusBarOwnerSummary())"
-    if log != lastPinLog {
-      lastPinLog = log
-      overlayLog(log)
-    }
-    if firstPinDone {
+      hideSystemBarsForStrip()
+      hideTopSwiftBar(pluginsDir: pluginsDir)
+      hideCompanionStatusApps(pluginsDir: pluginsDir)
+      syncStrips()
+      rebuildButtons()
+      var log = "screens=\(screens.count)"
       for strip in strips {
-        guard let screen = strip.screen else { continue }
-        let rect = bottomBarRect(screenFrame: screen.frame)
-        if barProtrudesIntoWorkArea(screenFrame: screen.frame, visibleFrame: screen.visibleFrame) {
-          promptAXOnce(pluginsDir: pluginsDir)
+        guard let screen = strip.screen else {
+          overlayLog("strip id=\(strip.displayID) missing screen")
+          continue
         }
-        liftStandardWindows(aboveBar: rect, on: screen)
+        pinToBottom(strip.window, screen: screen)
+        strip.window.orderFront(nil)
+        pinToBottom(strip.window, screen: screen)
+        log +=
+          " id=\(strip.displayID) y=\(Int(strip.window.frame.minY)) screenMinY=\(Int(screen.frame.minY))"
+          + " topHalf=\(frameIsOnTopHalf(strip.window.frame, screen: screen.frame))"
+          + " level=\(strip.window.level.rawValue)"
       }
+      log += " stacked=\(hasStackedLowerDisplay(screens)) topOwners=\(statusBarOwnerSummary())"
+      if log != lastPinLog {
+        lastPinLog = log
+        overlayLog(log)
+      }
+      if firstPinDone {
+        for strip in strips {
+          guard let screen = strip.screen else { continue }
+          let rect = bottomBarRect(screenFrame: screen.frame)
+          if barProtrudesIntoWorkArea(screenFrame: screen.frame, visibleFrame: screen.visibleFrame) {
+            promptAXOnce(pluginsDir: pluginsDir)
+          }
+          liftStandardWindows(aboveBar: rect, on: screen)
+        }
+      }
+      firstPinDone = true
     }
-    firstPinDone = true
   }
+
   private func tickClock() {
     let formatter = DateFormatter()
     formatter.locale = Locale(identifier: "en_GB")
     formatter.dateFormat = "EEE d MMM  HH:mm"
     let text = formatter.string(from: Date())
-    for strip in strips { strip.clockLabel.stringValue = text }
+    for strip in strips {
+      strip.clockLabel.stringValue = text
+    }
   }
+
   private func refreshPlugins() {
     snapshots = loadPlugins()
     applyPlacement()
   }
+
   private func rebuildButtons() {
     for strip in strips {
       strip.stack.views.forEach { $0.removeFromSuperview() }
@@ -592,9 +642,13 @@ final class BottomBarController: NSObject {
         button.isBordered = false
         button.font = NSFont.menuBarFont(ofSize: 13)
         button.contentTintColor = NSColor.white
-        button.attributedTitle = NSAttributedString(string: plugin.title, attributes: [
-          .foregroundColor: NSColor.white, .font: NSFont.menuBarFont(ofSize: 13),
-        ])
+        button.attributedTitle = NSAttributedString(
+          string: plugin.title,
+          attributes: [
+            .foregroundColor: NSColor.white,
+            .font: NSFont.menuBarFont(ofSize: 13),
+          ]
+        )
         strip.stack.addArrangedSubview(button)
       }
       let spacer = NSView()
@@ -604,25 +658,36 @@ final class BottomBarController: NSObject {
       strip.stack.addArrangedSubview(makeCloseButton())
     }
   }
+
   private func makeCloseButton() -> NSButton {
     let button = NSButton(title: "×", target: self, action: #selector(closeBar(_:)))
     button.bezelStyle = .inline
     button.isBordered = false
     button.font = NSFont.menuBarFont(ofSize: 14)
     button.contentTintColor = NSColor.white
-    button.attributedTitle = NSAttributedString(string: "×", attributes: [
-      .foregroundColor: NSColor.white, .font: NSFont.menuBarFont(ofSize: 14),
-    ])
+    button.attributedTitle = NSAttributedString(
+      string: "×",
+      attributes: [
+        .foregroundColor: NSColor.white,
+        .font: NSFont.menuBarFont(ofSize: 14),
+      ]
+    )
     button.toolTip = "Close bottom bar"
     return button
   }
+
   @objc private func closeBar(_: NSButton) {
-    FileManager.default.createFile(atPath: closedFlagURL(pluginsDir: pluginsDir).path, contents: Data(), attributes: nil)
+    FileManager.default.createFile(
+      atPath: closedFlagURL(pluginsDir: pluginsDir).path,
+      contents: Data(),
+      attributes: nil
+    )
     restoreSystemBars()
     restoreCompanionStatusApps(pluginsDir: pluginsDir)
     restoreTopSwiftBar(pluginsDir: pluginsDir)
     NSApp.terminate(nil)
   }
+
   @objc private func pluginClicked(_ sender: NSButton) {
     guard snapshots.indices.contains(sender.tag) else { return }
     let plugin = snapshots[sender.tag]
@@ -635,35 +700,54 @@ final class BottomBarController: NSObject {
     } else {
       for line in lines {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
-        if trimmed == "---" { menu.addItem(.separator()); continue }
+        if trimmed == "---" {
+          menu.addItem(.separator())
+          continue
+        }
         if trimmed.hasPrefix("--") || trimmed.isEmpty { continue }
-        let title = String(trimmed.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)[0]).trimmingCharacters(in: .whitespaces)
-        if !title.isEmpty { menu.addItem(NSMenuItem(title: title, action: nil, keyEquivalent: "")) }
+        let title = String(trimmed.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)[0])
+          .trimmingCharacters(in: .whitespaces)
+        if !title.isEmpty {
+          menu.addItem(NSMenuItem(title: title, action: nil, keyEquivalent: ""))
+        }
       }
     }
     menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
   }
+
   private func loadPlugins() -> [PluginSnapshot] {
     let fm = FileManager.default
-    guard let entries = try? fm.contentsOfDirectory(at: pluginsDir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return [] }
-    return entries.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }.compactMap { url -> PluginSnapshot? in
-      let name = url.lastPathComponent
-      if name.hasPrefix("one-screen-bottom") { return nil }
-      switch name {
-      case "bin", "lib", "tests", "ticker", "apply.sh", "install.sh", "macos-install.sh", "README.md": return nil
-      default: break
+    guard let entries = try? fm.contentsOfDirectory(
+      at: pluginsDir,
+      includingPropertiesForKeys: nil,
+      options: [.skipsHiddenFiles]
+    ) else { return [] }
+
+    return entries
+      .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+      .compactMap { url -> PluginSnapshot? in
+        let name = url.lastPathComponent
+        if name.hasPrefix("one-screen-bottom") {
+          return nil
+        }
+        switch name {
+        case "bin", "lib", "tests", "ticker", "apply.sh", "install.sh", "macos-install.sh", "README.md":
+          return nil
+        default:
+          break
+        }
+        if name.contains(".disabled.") || name.hasSuffix(".off") { return nil }
+        var isDir: ObjCBool = false
+        fm.fileExists(atPath: url.path, isDirectory: &isDir)
+        if isDir.boolValue { return nil }
+        guard fm.isExecutableFile(atPath: url.path) else { return nil }
+        let output = runPlugin(url)
+        let title = titleLine(from: output)
+        guard !title.isEmpty else { return nil }
+        return PluginSnapshot(url: url, name: pluginDisplayName(name), title: title, body: output)
       }
-      if name.contains(".disabled.") || name.hasSuffix(".off") { return nil }
-      var isDir: ObjCBool = false
-      fm.fileExists(atPath: url.path, isDirectory: &isDir)
-      if isDir.boolValue { return nil }
-      guard fm.isExecutableFile(atPath: url.path) else { return nil }
-      let output = runPlugin(url)
-      let title = titleLine(from: output)
-      guard !title.isEmpty else { return nil }
-      return PluginSnapshot(url: url, name: pluginDisplayName(name), title: title, body: output)
-    }
   }
+
   private func runPlugin(_ url: URL) -> String {
     let proc = Process()
     proc.executableURL = url
@@ -677,17 +761,26 @@ final class BottomBarController: NSObject {
     proc.standardOutput = pipe
     proc.standardError = Pipe()
     do { try proc.run() } catch { return "" }
+
     let group = DispatchGroup()
     group.enter()
-    DispatchQueue.global().async { proc.waitUntilExit(); group.leave() }
-    if group.wait(timeout: .now() + 8) == .timedOut { proc.terminate(); return "" }
+    DispatchQueue.global().async {
+      proc.waitUntilExit()
+      group.leave()
+    }
+    if group.wait(timeout: .now() + 8) == .timedOut {
+      proc.terminate()
+      return ""
+    }
     return String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
   }
 }
 
 func pluginDisplayName(_ filename: String) -> String {
   var base = (filename as NSString).deletingPathExtension
-  if let range = base.range(of: "[.][0-9]+[smhd]$", options: .regularExpression) { base.removeSubrange(range) }
+  if let range = base.range(of: "[.][0-9]+[smhd]$", options: .regularExpression) {
+    base.removeSubrange(range)
+  }
   return base
 }
 
@@ -696,7 +789,8 @@ func titleLine(from output: String) -> String {
     let line = String(raw).trimmingCharacters(in: .whitespaces)
     if line == "---" { break }
     if line.isEmpty || line.hasPrefix("#") { continue }
-    return String(line.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)[0]).trimmingCharacters(in: .whitespaces)
+    return String(line.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)[0])
+      .trimmingCharacters(in: .whitespaces)
   }
   return ""
 }
@@ -712,20 +806,29 @@ func pluginsDirectory() -> URL {
   let args = Array(CommandLine.arguments.dropFirst())
   var i = 0
   while i < args.count {
-    if args[i] == "--plugins-dir", i + 1 < args.count { dir = args[i + 1]; i += 2; continue }
+    if args[i] == "--plugins-dir", i + 1 < args.count {
+      dir = args[i + 1]
+      i += 2
+      continue
+    }
     i += 1
   }
   if let dir = dir {
     let url = URL(fileURLWithPath: dir)
-    if pathLooksLikeStub(url.path) { return url.deletingLastPathComponent() }
+    if pathLooksLikeStub(url.path) {
+      return url.deletingLastPathComponent()
+    }
     return url
   }
   if let env = ProcessInfo.processInfo.environment["SWIFTBAR_PLUGINS_PATH"], !env.isEmpty {
     let url = URL(fileURLWithPath: env)
-    if pathLooksLikeStub(url.path) { return url.deletingLastPathComponent() }
+    if pathLooksLikeStub(url.path) {
+      return url.deletingLastPathComponent()
+    }
     return url
   }
-  return URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".config/swiftbar/plugins")
+  return URL(fileURLWithPath: NSHomeDirectory())
+    .appendingPathComponent(".config/swiftbar/plugins")
 }
 
 func markerArgument() -> String {
@@ -740,6 +843,7 @@ func markerArgument() -> String {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
   var controller: BottomBarController?
+
   func applicationDidFinishLaunching(_ notification: Notification) {
     ProcessInfo.processInfo.disableSuddenTermination()
     overlayLog("launching")
@@ -751,6 +855,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     controller = BottomBarController(pluginsDir: dir, marker: markerArgument())
   }
+
   func applicationWillTerminate(_ notification: Notification) {
     restoreSystemBars()
     let dir = pluginsDirectory()
