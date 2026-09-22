@@ -13,11 +13,13 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 0
 fi
 
-# shellcheck source=lib/bar-state.sh
 if [[ -f "$DIR/lib/bar-state.sh" ]]; then
   . "$DIR/lib/bar-state.sh"
 else
   exit 0
+fi
+if [[ -f "$DIR/lib/overlay-app.sh" ]]; then
+  . "$DIR/lib/overlay-app.sh"
 fi
 
 open_bar() {
@@ -34,8 +36,12 @@ open_bar() {
     fi
     chmod +x "$BIN"
   fi
-  if [[ -x "$BIN" ]] && ! bar_is_up; then
-    nohup "$BIN" --plugins-dir "$PLUGINS" --marker "$MARKER" \
+  RUN="$BIN"
+  if type overlay_app_wrap >/dev/null 2>&1; then
+    RUN="$(overlay_app_wrap "$DIR" "$BIN")"
+  fi
+  if [[ -x "$RUN" ]] && ! bar_is_up; then
+    nohup "$RUN" --plugins-dir "$PLUGINS" --marker "$MARKER" \
       >/tmp/swiftbar-bottom-overlay.out 2>&1 &
     disown || true
   fi

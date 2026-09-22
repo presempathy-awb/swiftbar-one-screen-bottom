@@ -9,7 +9,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 MARKER="swiftbar-one-screen-bottom"
 DEFAULT_MAC_PLUGINS="/Users/andrew/.config/swiftbar/plugins"
 BASE="https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main"
-INSTALL_REV="v13"
+INSTALL_REV="v14"
 MAC_CURL="${BASE}/macos-install.sh?${INSTALL_REV}"
 SELF="${BASH_SOURCE[0]:-$0}"
 
@@ -111,13 +111,12 @@ resolve_dest() {
 }
 
 have_local_sources() {
-  # Installed plugin folders have overlay sources too. Only a repo checkout
-  # (with tests) may copy local files; otherwise use the embedded payloads.
   [[ -f "$ROOT/tests/apply.test.sh" \
      && -f "$ROOT/one-screen-bottom.5s.sh" \
      && -f "$ROOT/one-screen-bottom-launch.5s.sh" \
      && -f "$ROOT/lib/bar-state.sh" \
      && -f "$ROOT/lib/swiftbar-park.sh" \
+     && -f "$ROOT/lib/overlay-app.sh" \
      && -f "$ROOT/bin/bottom-overlay.swift" ]] \
     && grep -Fq 'hideTopSwiftBar' "$ROOT/bin/bottom-overlay.swift" \
     && grep -Fq 'parkTopSwiftBar' "$ROOT/bin/bottom-overlay.swift" \
@@ -128,8 +127,6 @@ have_local_sources() {
 }
 
 decode_base64() {
-  # macOS LibreSSL `openssl base64 -d` often returns 0 with garbage.
-  # /usr/bin/base64 -D is the Darwin decoder; -d is GNU.
   if [[ "$(uname -s)" == "Darwin" ]]; then
     /usr/bin/base64 -D
     return
@@ -223,6 +220,7 @@ install_file "one-screen-bottom.5s.sh" "$DEST/one-screen-bottom.5s.sh" 755
 install_file "one-screen-bottom-launch.5s.sh" "$DEST/one-screen-bottom-launch.5s.sh" 755
 install_file "lib/bar-state.sh" "$DEST/lib/bar-state.sh" 644
 install_file "lib/swiftbar-park.sh" "$DEST/lib/swiftbar-park.sh" 644
+install_file "lib/overlay-app.sh" "$DEST/lib/overlay-app.sh" 644
 install_file "bin/bottom-overlay.swift" "$DEST/bin/bottom-overlay.swift" 644
 if ! overlay_looks_ok "$DEST/bin/bottom-overlay.swift"; then
   curl -fsSL "${BASE}/bin/bottom-overlay.swift?${INSTALL_REV}" -o "$DEST/bin/bottom-overlay.swift"
@@ -233,10 +231,9 @@ if ! overlay_looks_ok "$DEST/bin/bottom-overlay.swift"; then
   exit 1
 fi
 
-# shellcheck source=lib/bar-state.sh
 . "$DEST/lib/bar-state.sh"
-# shellcheck source=lib/swiftbar-park.sh
 . "$DEST/lib/swiftbar-park.sh"
+. "$DEST/lib/overlay-app.sh"
 bar_mark_open "$DEST"
 
 BIN="$DEST/bin/bottom-overlay"
@@ -248,6 +245,7 @@ if ! compile_overlay "$SRC" "$BIN" /tmp/swiftbar-bottom-overlay.log; then
   exit 1
 fi
 chmod +x "$BIN"
+RUN="$(overlay_app_wrap "$DEST" "$BIN")"
 
 swiftbar_park "$DEST"
 
@@ -255,7 +253,7 @@ pkill -f "$MARKER" >/dev/null 2>&1 || true
 pkill -f '/bin/bottom-overlay' >/dev/null 2>&1 || true
 sleep 0.4
 
-nohup "$BIN" --plugins-dir "$DEST" --marker "$MARKER" \
+nohup "$RUN" --plugins-dir "$DEST" --marker "$MARKER" \
   >/tmp/swiftbar-bottom-overlay.out 2>&1 &
 disown || true
 
@@ -268,7 +266,8 @@ if [[ -f "$SELF" && "$SELF" != *bash && -r "$SELF" ]]; then
 fi
 
 echo "Installed into $DEST"
-echo "Strip on the bottom edge of every display. SwiftBar is quit while it is up."
+echo "Strip on the bottom edge of every display. SwiftBar and Stats are quit while it is up."
+echo "HIGH CPU / LOW DISK extras are Stats, not SwiftBar. Look at the physical bottom edge."
 echo "Do not use SwiftBar refresh; that puts extras back on top. Re-run apply.sh instead."
 echo "Closed: ⬇ in SwiftBar reopens. It will not auto-open while closed."
 sleep 0.4
@@ -291,6 +290,11 @@ if pgrep -x SwiftBar >/dev/null 2>&1; then
   echo "SwiftBar still running (top extras may remain)."
 else
   echo "SwiftBar is not running."
+fi
+if pgrep -x Stats >/dev/null 2>&1; then
+  echo "Stats still running (HIGH CPU / LOW DISK extras are Stats)."
+else
+  echo "Stats is not running."
 fi
 
 # BEGIN_EMBEDDED_PAYLOADS

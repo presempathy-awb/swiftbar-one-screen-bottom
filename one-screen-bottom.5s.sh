@@ -5,10 +5,8 @@
 # <swiftbar.hideDisablePlugin>true</swiftbar.hideDisablePlugin>
 # <swiftbar.hideSwiftBar>true</swiftbar.hideSwiftBar>
 #
-# Hidden. Starts a bottom strip when there is no display stacked below.
-# Stacked dual monitors: overlay hides; your lower-display SwiftBar stays.
-# While the strip is up, SwiftBar is pointed at an empty stub (StealthMode)
-# so extras leave the top menu bar. Closed (×) or urgent memory: do not start.
+# Hidden. Starts a strip on the physical bottom of the lowest display.
+# While the strip is up, the top menu bar hides and SwiftBar extras are parked.
 
 set -euo pipefail
 
@@ -22,11 +20,13 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 0
 fi
 
-# shellcheck source=lib/bar-state.sh
 if [[ -f "$DIR/lib/bar-state.sh" ]]; then
   . "$DIR/lib/bar-state.sh"
 else
   exit 0
+fi
+if [[ -f "$DIR/lib/overlay-app.sh" ]]; then
+  . "$DIR/lib/overlay-app.sh"
 fi
 
 if ! bar_should_autostart "$DIR"; then
@@ -55,8 +55,13 @@ if [[ ! -x "$BIN" || "$SRC" -nt "$BIN" ]]; then
   chmod +x "$BIN"
 fi
 
+RUN="$BIN"
+if command -v overlay_app_wrap >/dev/null 2>&1 || type overlay_app_wrap >/dev/null 2>&1; then
+  RUN="$(overlay_app_wrap "$DIR" "$BIN")"
+fi
+
 if ! bar_is_up; then
-  nohup "$BIN" --plugins-dir "$PLUGINS" --marker "$MARKER" \
+  nohup "$RUN" --plugins-dir "$PLUGINS" --marker "$MARKER" \
     >/tmp/swiftbar-bottom-overlay.out 2>&1 &
   disown || true
 fi
