@@ -1,7 +1,7 @@
 import Cocoa
 import ApplicationServices
 
-let overlayRev = "v12"
+let overlayRev = "v13"
 let swiftBarDefaultsDomain = "com.ameba.SwiftBar"
 let stubFolderName = ".one-screen-bottom-stub"
 let savedPluginDirName = ".one-screen-bottom.saved-plugin-dir"
@@ -11,8 +11,8 @@ enum BarPlacement {
   case hidden
 }
 
-func placement(forScreenCount count: Int) -> BarPlacement {
-  count <= 1 ? .bottom : .hidden
+func placement(forScreenCount _: Int) -> BarPlacement {
+  .bottom
 }
 
 func hasStackedLowerDisplay(_ screens: [NSScreen]) -> Bool {
@@ -42,7 +42,12 @@ func screenMatching(id: CGDirectDisplayID) -> NSScreen? {
 }
 
 func placement(screens: [NSScreen]) -> BarPlacement {
-  screens.isEmpty ? .hidden : .bottom
+  .bottom
+}
+
+func overlayLog(_ message: String) {
+  FileHandle.standardError.write(Data("overlay rev=\(overlayRev) \(message)\n".utf8))
+  try? FileHandle.standardError.synchronize()
 }
 
 func swiftBarBundleID() -> String { "com.ameba.SwiftBar" }
@@ -178,7 +183,9 @@ func bottomBarRect(screenFrame: NSRect, height: CGFloat = 28) -> NSRect {
 }
 
 func barWindowLevel() -> NSWindow.Level {
-  .floating
+  // Above the Dock so the strip is visible on the physical bottom edge.
+  // Below menu-bar / statusBar levels so AppKit does not snap it to the top.
+  NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
 }
 
 func frameIsOnTopHalf(_ frame: NSRect, screen: NSRect) -> Bool {
@@ -368,12 +375,6 @@ func closedFlagURL(pluginsDir: URL) -> URL {
 final class BottomWindow: NSWindow {
   var displayID: CGDirectDisplayID = 0
 
-  convenience init(display: NSScreen) {
-    let rect = bottomBarRect(screenFrame: display.frame)
-    self.init(contentRect: rect, styleMask: .borderless, backing: .buffered, defer: false, screen: display)
-    displayID = screenDisplayID(display)
-  }
-
   override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
     let match = screenMatching(id: displayID) ?? screen ?? self.screen
     guard let match else { return frameRect }
@@ -392,24 +393,33 @@ final class ScreenStrip {
 
   init(display: NSScreen) {
     displayID = screenDisplayID(display)
-    let window = BottomWindow(display: display)
+    let rect = bottomBarRect(screenFrame: display.frame)
+    let window = BottomWindow(contentRect: rect, styleMask: .borderless, backing: .buffered, defer: false)
+    window.displayID = displayID
     window.level = barWindowLevel()
     window.isOpaque = true
-    window.backgroundColor = NSColor.windowBackgroundColor
+    window.backgroundColor = NSColor(calibratedWhite: 0.16, alpha: 1)
+    window.appearance = NSAppearance(named: .darkAqua)
     window.hasShadow = false
     window.hidesOnDeactivate = false
     window.isMovable = false
     window.isRestorable = false
     window.animationBehavior = .none
-    window.collectionBehavior = [.canJoinAllSpaces, .ignoresCycle]
+    window.collectionBehavior = [.stationary, .ignoresCycle, .canJoinAllSpaces]
     window.titleVisibility = .hidden
     window.titlebarAppearsTransparent = true
+    overlayLog("created strip id=\(displayID) y=\(Int(rect.minY)) w=\(Int(rect.width))")
 
-    let fx = NSVisualEffectView()
-    fx.material = .sidebar
-    fx.blendingMode = .behindWindow
-    fx.state = .active
-    fx.translatesAutoresizingMaskIntoConstraints = false
+    let root = NSView(frame: NSRect(origin: .zero, size: rect.size))
+    root.autoresizingMask = [.width, .height]
+    root.wantsLayer = true
+    root.layer?.backgroundColor = NSColor(calibratedWhite: 0.16, alpha: 1).cgColor
+
+    let hairline = NSView(frame: NSRect(x: 0, y: rect.height - 1, width: rect.width, height: 1))
+    hairline.wantsLayer = true
+    hairline.layer?.backgroundColor = NSColor(calibratedWhite: 0.42, alpha: 1).cgColor
+    hairline.autoresizingMask = [.width, .minYMargin]
+    root.addSubview(hairline)
 
     let stack = NSStackView()
     stack.orientation = .horizontal
@@ -420,15 +430,15 @@ final class ScreenStrip {
 
     let clock = NSTextField(labelWithString: "")
     clock.font = NSFont.menuBarFont(ofSize: 13)
-    clock.textColor = .labelColor
+    clock.textColor = NSColor.white
 
-    window.contentView = fx
-    fx.addSubview(stack)
+    window.contentView = root
+    root.addSubview(stack)
     NSLayoutConstraint.activate([
-      stack.leadingAnchor.constraint(equalTo: fx.leadingAnchor),
-      stack.trailingAnchor.constraint(equalTo: fx.trailingAnchor),
-      stack.topAnchor.constraint(equalTo: fx.topAnchor),
-      stack.bottomAnchor.constraint(equalTo: fx.bottomAnchor),
+      stack.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+      stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+      stack.topAnchor.constraint(equalTo: root.topAnchor),
+      stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
     ])
 
     self.window = window
@@ -453,12 +463,13 @@ final class BottomBarController: NSObject {
   private var clockTimer: Timer?
   private var pluginTimer: Timer?
   private var lastPinLog = ""
+  private var firstPinDone = false
 
   init(pluginsDir: URL, marker: String) {
     self.pluginsDir = pluginsDir
     super.init()
     ProcessInfo.processInfo.processName = marker
-    FileHandle.standardError.write(Data("overlay rev=\(overlayRev) starting\n".utf8))
+    overlayLog("starting")
     applyPlacement()
     tickClock()
     clockTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -502,37 +513,51 @@ final class BottomBarController: NSObject {
       NSApp.terminate(nil)
       return
     }
-    switch placement(screens: NSScreen.screens) {
+    let screens = NSScreen.screens
+    if screens.isEmpty {
+      overlayLog("waiting-for-screens")
+      return
+    }
+    switch placement(screens: screens) {
     case .hidden:
-      strips.forEach { $0.window.orderOut(nil) }
-      restoreSystemBars()
-      restoreTopSwiftBar(pluginsDir: pluginsDir)
+      overlayLog("hidden-skipped, keeping bottom")
     case .bottom:
-      hideSystemBarsForStrip()
-      hideTopSwiftBar(pluginsDir: pluginsDir)
-      syncStrips()
-      rebuildButtons()
-      var log = "overlay rev=\(overlayRev) screens=\(NSScreen.screens.count)"
+      break
+    }
+    hideSystemBarsForStrip()
+    hideTopSwiftBar(pluginsDir: pluginsDir)
+    syncStrips()
+    rebuildButtons()
+    var log = "screens=\(screens.count)"
+    for strip in strips {
+      guard let screen = strip.screen else {
+        overlayLog("strip id=\(strip.displayID) missing screen")
+        continue
+      }
+      pinToBottom(strip.window, screen: screen)
+      strip.window.orderFront(nil)
+      pinToBottom(strip.window, screen: screen)
+      log +=
+        " id=\(strip.displayID) y=\(Int(strip.window.frame.minY)) screenMinY=\(Int(screen.frame.minY))"
+        + " topHalf=\(frameIsOnTopHalf(strip.window.frame, screen: screen.frame))"
+        + " level=\(strip.window.level.rawValue)"
+    }
+    log += " stacked=\(hasStackedLowerDisplay(screens))"
+    if log != lastPinLog {
+      lastPinLog = log
+      overlayLog(log)
+    }
+    if firstPinDone {
       for strip in strips {
         guard let screen = strip.screen else { continue }
-        pinToBottom(strip.window, screen: screen)
-        strip.window.orderFront(nil)
-        pinToBottom(strip.window, screen: screen)
-        log +=
-          " id=\(strip.displayID) y=\(Int(strip.window.frame.minY)) screenMinY=\(Int(screen.frame.minY))"
-          + " topHalf=\(frameIsOnTopHalf(strip.window.frame, screen: screen.frame))"
         let rect = bottomBarRect(screenFrame: screen.frame)
         if barProtrudesIntoWorkArea(screenFrame: screen.frame, visibleFrame: screen.visibleFrame) {
           promptAXOnce(pluginsDir: pluginsDir)
         }
         liftStandardWindows(aboveBar: rect, on: screen)
       }
-      log += " stacked=\(hasStackedLowerDisplay(NSScreen.screens))\n"
-      if log != lastPinLog {
-        lastPinLog = log
-        FileHandle.standardError.write(Data(log.utf8))
-      }
     }
+    firstPinDone = true
   }
 
   private func tickClock() {
@@ -559,6 +584,14 @@ final class BottomBarController: NSObject {
         button.bezelStyle = .inline
         button.isBordered = false
         button.font = NSFont.menuBarFont(ofSize: 13)
+        button.contentTintColor = NSColor.white
+        button.attributedTitle = NSAttributedString(
+          string: plugin.title,
+          attributes: [
+            .foregroundColor: NSColor.white,
+            .font: NSFont.menuBarFont(ofSize: 13),
+          ]
+        )
         strip.stack.addArrangedSubview(button)
       }
       let spacer = NSView()
@@ -574,6 +607,14 @@ final class BottomBarController: NSObject {
     button.bezelStyle = .inline
     button.isBordered = false
     button.font = NSFont.menuBarFont(ofSize: 14)
+    button.contentTintColor = NSColor.white
+    button.attributedTitle = NSAttributedString(
+      string: "×",
+      attributes: [
+        .foregroundColor: NSColor.white,
+        .font: NSFont.menuBarFont(ofSize: 14),
+      ]
+    )
     button.toolTip = "Close bottom bar"
     return button
   }
@@ -746,10 +787,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   var controller: BottomBarController?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
-    FileHandle.standardError.write(Data("overlay rev=\(overlayRev) launching\n".utf8))
+    overlayLog("launching")
     let dir = pluginsDirectory()
     if FileManager.default.fileExists(atPath: closedFlagURL(pluginsDir: dir).path) {
-      FileHandle.standardError.write(Data("overlay rev=\(overlayRev) closed-flag, exiting\n".utf8))
+      overlayLog("closed-flag, exiting")
       NSApp.terminate(nil)
       return
     }
