@@ -5,8 +5,8 @@
 # <swiftbar.hideDisablePlugin>true</swiftbar.hideDisablePlugin>
 # <swiftbar.hideSwiftBar>true</swiftbar.hideSwiftBar>
 #
-# Hidden. Starts a strip on the physical bottom of the lowest display.
-# While the strip is up, the top menu bar hides and SwiftBar extras are parked.
+# Hidden. On one screen, starts a strip on the physical bottom edge.
+# Two screens: extras already sit on the lower display menu bar; overlay stays out.
 
 set -euo pipefail
 
@@ -20,11 +20,13 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 0
 fi
 
+# shellcheck source=lib/bar-state.sh
 if [[ -f "$DIR/lib/bar-state.sh" ]]; then
   . "$DIR/lib/bar-state.sh"
 else
   exit 0
 fi
+# shellcheck source=lib/overlay-app.sh
 if [[ -f "$DIR/lib/overlay-app.sh" ]]; then
   . "$DIR/lib/overlay-app.sh"
 fi
