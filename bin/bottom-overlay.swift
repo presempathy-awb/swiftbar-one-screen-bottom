@@ -1,7 +1,7 @@
 import Cocoa
 import ApplicationServices
 
-let overlayRev = "v15"
+let overlayRev = "v16"
 let swiftBarDefaultsDomain = "com.ameba.SwiftBar"
 let stubFolderName = ".one-screen-bottom-stub"
 let savedPluginDirName = ".one-screen-bottom.saved-plugin-dir"
@@ -239,15 +239,80 @@ func frameIsOnTopHalf(_ frame: NSRect, screen: NSRect) -> Bool {
   frame.midY > screen.midY
 }
 
-func pinToBottom(_ window: NSWindow, screen: NSScreen) {
-  let rect = bottomBarRect(screenFrame: screen.frame, height: 28)
+func quartzBoundsDict(_ item: [String: Any]) -> CGRect? {
+  guard let bounds = item[kCGWindowBounds as String] as? [String: CGFloat] else { return nil }
+  return CGRect(
+    x: bounds["X"] ?? 0,
+    y: bounds["Y"] ?? 0,
+    width: bounds["Width"] ?? 0,
+    height: bounds["Height"] ?? 0
+  )
+}
+
+func quartzFrame(of window: NSWindow) -> CGRect? {
+  let wid = CGWindowID(window.windowNumber)
+  if wid != 0 {
+    if let raw = CGWindowListCopyWindowInfo([.optionIncludingWindow], wid) as? [[String: Any]] {
+      for item in raw {
+        var id = 0
+        if let n = item[kCGWindowNumber as String] as? Int {
+          id = n
+        } else if let n = item[kCGWindowNumber as String] as? NSNumber {
+          id = n.intValue
+        }
+        if CGWindowID(id) != wid { continue }
+        if let rect = quartzBoundsDict(item) { return rect }
+      }
+    }
+  }
+  let selfPid = Int(ProcessInfo.processInfo.processIdentifier)
+  let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+  var match: CGRect?
+  for item in info {
+    guard let pid = item[kCGWindowOwnerPID as String] as? Int, pid == selfPid else { continue }
+    guard let rect = quartzBoundsDict(item) else { continue }
+    if abs(rect.width - window.frame.width) > 8 { continue }
+    if rect.height > 64 { continue }
+    match = rect
+  }
+  return match
+}
+
+func quartzVisualEdge(quartzY: CGFloat, screenQuartz: CGRect) -> String {
+  quartzY < screenQuartz.midY ? "top" : "bottom"
+}
+
+func desiredQuartzBottomY(screen: NSScreen, height: CGFloat = 28) -> CGFloat {
+  quartzRect(fromAppKit: screen.frame).maxY - height
+}
+
+func pinToBottom(_ window: BottomWindow, screen: NSScreen) {
+  let height: CGFloat = 28
+  let nativeY = screen.frame.minY
+  let flippedY = screen.frame.maxY - height
+  func rectForY(_ y: CGFloat) -> NSRect {
+    NSRect(x: screen.frame.minX, y: y, width: screen.frame.width, height: height)
+  }
   window.level = barWindowLevel()
+  var y = window.originYOverride ?? nativeY
+  window.originYOverride = y
+  let rect = rectForY(y)
   window.setFrame(rect, display: true)
   window.setFrameOrigin(NSPoint(x: rect.minX, y: rect.minY))
-  if frameIsOnTopHalf(window.frame, screen: screen.frame) || abs(window.frame.minY - rect.minY) > 1 {
-    window.setFrame(rect, display: true)
-    window.setFrameOrigin(NSPoint(x: rect.minX, y: rect.minY))
-  }
+  window.orderFront(nil)
+  window.displayIfNeeded()
+
+  let targetQY = desiredQuartzBottomY(screen: screen, height: height)
+  guard let actual = quartzFrame(of: window) else { return }
+  if abs(actual.minY - targetQY) <= 10 { return }
+  if window.triedFlippedPin { return }
+
+  window.triedFlippedPin = true
+  y = abs(y - nativeY) < 1 ? flippedY : nativeY
+  window.originYOverride = y
+  let flipped = rectForY(y)
+  window.setFrame(flipped, display: true)
+  window.setFrameOrigin(NSPoint(x: flipped.minX, y: flipped.minY))
 }
 
 func workAreaMinY(screenFrame: NSRect, visibleFrame: NSRect, barHeight: CGFloat = 28) -> CGFloat {
@@ -421,11 +486,14 @@ func closedFlagURL(pluginsDir: URL) -> URL {
 
 final class BottomWindow: NSWindow {
   var displayID: CGDirectDisplayID = 0
+  var originYOverride: CGFloat? = nil
+  var triedFlippedPin = false
 
   override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
     let match = screenMatching(id: displayID) ?? screen ?? self.screen
     guard let match else { return frameRect }
-    return bottomBarRect(screenFrame: match.frame, height: 28)
+    let y = originYOverride ?? match.frame.minY
+    return NSRect(x: match.frame.minX, y: y, width: match.frame.width, height: 28)
   }
 
   override var canBecomeKey: Bool { false }
@@ -591,10 +659,16 @@ final class BottomBarController: NSObject {
           continue
         }
         pinToBottom(strip.window, screen: screen)
-        strip.window.orderFront(nil)
-        pinToBottom(strip.window, screen: screen)
+        let screenQ = quartzRect(fromAppKit: screen.frame)
+        var visual = "unknown"
+        var quartzYLog = "na"
+        if let actual = quartzFrame(of: strip.window) {
+          quartzYLog = "\(Int(actual.minY))"
+          visual = quartzVisualEdge(quartzY: actual.minY, screenQuartz: screenQ)
+        }
         log +=
           " id=\(strip.displayID) y=\(Int(strip.window.frame.minY)) screenMinY=\(Int(screen.frame.minY))"
+          + " quartzY=\(quartzYLog) visual=\(visual)"
           + " topHalf=\(frameIsOnTopHalf(strip.window.frame, screen: screen.frame))"
           + " level=\(strip.window.level.rawValue)"
       }
