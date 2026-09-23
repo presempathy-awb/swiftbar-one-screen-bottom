@@ -9,7 +9,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 MARKER="swiftbar-one-screen-bottom"
 DEFAULT_MAC_PLUGINS="/Users/andrew/.config/swiftbar/plugins"
 BASE="https://raw.githubusercontent.com/presempathy-awb/swiftbar-one-screen-bottom/main"
-INSTALL_REV="v15"
+INSTALL_REV="v16"
 MAC_CURL="${BASE}/macos-install.sh?${INSTALL_REV}"
 SELF="${BASH_SOURCE[0]:-$0}"
 
@@ -126,6 +126,8 @@ have_local_sources() {
     && grep -Fq 'pinToBottom' "$ROOT/bin/bottom-overlay.swift" \
     && grep -Fq 'count <= 1' "$ROOT/bin/bottom-overlay.swift" \
     && grep -Fq 'two-screens, leaving extras on the display menu bar' "$ROOT/bin/bottom-overlay.swift" \
+    && grep -Fq 'visual=' "$ROOT/bin/bottom-overlay.swift" \
+    && grep -Fq 'originYOverride' "$ROOT/bin/bottom-overlay.swift" \
     && ! grep -Fq 'level = .statusBar' "$ROOT/bin/bottom-overlay.swift" \
     && ! grep -Fq 'desktopIconWindow' "$ROOT/bin/bottom-overlay.swift"
 }
@@ -178,7 +180,9 @@ overlay_looks_ok() {
     && grep -Fq 'pinToBottom' "$1" \
     && grep -Fq 'hideTopSwiftBar' "$1" \
     && grep -Fq 'count <= 1' "$1" \
-    && grep -Fq 'two-screens, leaving extras on the display menu bar' "$1"
+    && grep -Fq 'two-screens, leaving extras on the display menu bar' "$1" \
+    && grep -Fq 'visual=' "$1" \
+    && grep -Fq 'originYOverride' "$1"
 }
 
 install_file() {
@@ -283,7 +287,7 @@ echo "Do not use SwiftBar refresh; that puts extras back on top. Re-run apply.sh
 echo "Closed: ⬇ in SwiftBar reopens. It will not auto-open while closed."
 sleep 0.4
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40; do
-  if grep -q 'screenMinY=' /tmp/swiftbar-bottom-overlay.out 2>/dev/null; then
+  if grep -q 'visual=bottom' /tmp/swiftbar-bottom-overlay.out 2>/dev/null; then
     break
   fi
   if grep -q 'two-screens' /tmp/swiftbar-bottom-overlay.out 2>/dev/null; then
